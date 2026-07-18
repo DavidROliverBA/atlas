@@ -17,6 +17,19 @@ adopter hits in week one · **P2** = quality/scale improvements.
 
 ---
 
+> **Status update (later on 2026-07-18):** 0.2 CI workflow committed (activates on first
+> push); 0.3 done (proxy key set, verified end-to-end); 0.4 done (atomic
+> `atlas_save_workspace` with row-lock + revision guard + jittered retries, statement/lock
+> timeouts, fetch timeouts in functions); 0.5 done (GitHub allow-list on API + AI proxy).
+> 0.1 (git remote) remains — the push needs to be run by the owner.
+> A.1/A.2 done (temporal editor, states manager, view create/rename/delete).
+> **New P0-class finding fixed during the incident:** the security-definer save function
+> was EXECUTE-granted to PUBLIC by Postgres default — publicly invocable with the shipped
+> anon key, bypassing RLS (now revoked; lesson: audit EXECUTE grants on every
+> security-definer function). **Open question:** a sustained ~1.4k req/s PostgREST flood
+> of unknown origin was observed during load-testing recovery; check Supabase dashboard
+> API logs to attribute it.
+
 ## P0 — before anyone else touches it
 
 | # | Finding | Detail |
