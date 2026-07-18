@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAtlas } from "./store";
 import { Toolbar } from "./components/Toolbar";
 import { Palette } from "./components/Palette";
@@ -10,6 +10,7 @@ import { ModeToggle } from "./components/ModeToggle";
 import { ConnectionsView } from "./components/ConnectionsView";
 import { AnalysisDrawer } from "./components/AnalysisDrawer";
 import { TimelineBar } from "./components/TimelineBar";
+import { ChatPanel } from "./components/ChatPanel";
 
 function Toast() {
   const error = useAtlas((s) => s.error);
@@ -35,6 +36,7 @@ export default function App() {
   const undo = useAtlas((s) => s.undo);
   const redo = useAtlas((s) => s.redo);
   const overlay = useAtlas((s) => s.overlay);
+  const [rightTab, setRightTab] = useState<"inspector" | "chat">("inspector");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -66,8 +68,24 @@ export default function App() {
             <AnalysisDrawer onClose={() => useAtlas.setState({ overlay: null })} />
           )}
         </main>
-        <aside className="w-80 shrink-0 border-l border-slate-200 bg-white">
-          <Inspector />
+        <aside className="flex w-80 shrink-0 flex-col border-l border-slate-200 bg-white">
+          <div className="flex border-b border-slate-200">
+            {(["inspector", "chat"] as const).map((tab) => (
+              <button
+                key={tab}
+                data-testid={`right-tab-${tab}`}
+                onClick={() => setRightTab(tab)}
+                className={`flex-1 px-3 py-2 text-xs font-semibold uppercase tracking-wide ${
+                  rightTab === tab
+                    ? "border-b-2 border-blue-500 text-slate-800"
+                    : "text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                {tab === "inspector" ? "Inspector" : "AI chat"}
+              </button>
+            ))}
+          </div>
+          <div className="min-h-0 flex-1">{rightTab === "inspector" ? <Inspector /> : <ChatPanel />}</div>
         </aside>
       </div>
       <TimelineBar />

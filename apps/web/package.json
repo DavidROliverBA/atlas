@@ -11,6 +11,7 @@
     "test": "playwright test"
   },
   "dependencies": {
+    "@atlas/ai": "workspace:^",
     "@atlas/core": "workspace:*",
     "@atlas/stencils": "workspace:^",
     "@xyflow/react": "^12.3.0",
