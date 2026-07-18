@@ -90,11 +90,14 @@ test.describe("model editing via palette and inspector", () => {
     await expect(canvasNode(page, "Booking Engine")).toBeVisible();
   });
 
-  test("metamodel validation: a container cannot be added at the landscape level", async ({ page }) => {
+  test("level rules: container/component stencils are disabled on the landscape", async ({ page }) => {
     await freshApp(page);
-    await page.getByTestId("palette-container").click();
-
-    await expect(page.getByTestId("toast-error")).toContainText("cannot live at the top level");
+    // The palette is organised by level; wrong-level stencils are greyed out.
+    await expect(page.getByTestId("palette-level-context")).toBeVisible();
+    await expect(page.getByTestId("palette-level-container-unavailable")).toBeVisible();
+    await expect(page.getByTestId("palette-container")).toBeDisabled();
+    await expect(page.getByTestId("palette-component")).toBeDisabled();
+    await expect(page.getByTestId("palette-system")).toBeEnabled();
     await expect(canvasNode(page, "New Container")).toHaveCount(0);
   });
 

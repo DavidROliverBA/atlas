@@ -51,9 +51,10 @@ test.describe("C4 zoom navigation", () => {
     // The tree nests it under Booking Engine.
     await expect(treeItem(page, "New Container")).toBeVisible();
 
-    // And a person is still illegal inside a system.
-    await page.getByTestId("palette-person").click();
-    await expect(page.getByTestId("toast-error")).toContainText("cannot live inside");
+    // And people belong to context level only — disabled here (systems from
+    // the same section stay usable, e.g. external systems on a container view).
+    await expect(page.getByTestId("palette-person")).toBeDisabled();
+    await expect(page.getByTestId("palette-system")).toBeEnabled();
   });
 
   test("full drill: landscape → containers → components → back to landscape", async ({ page }) => {

@@ -1,4 +1,5 @@
 import type { Element } from "@atlas/core";
+import { VIEW_PLACEMENT } from "@atlas/core";
 import { stencilFor } from "../stencils";
 import { useAtlas } from "../store";
 import { freeSpot } from "./Palette";
@@ -33,7 +34,7 @@ function TreeNode({ element, depth }: { element: Element; depth: number }) {
             ●
           </span>
         )}
-        {!onActiveView && view && element.kind !== "group" && (
+        {!onActiveView && view && element.kind !== "group" && VIEW_PLACEMENT[view.kind].includes(element.kind) && (
           <button
             title="Place on current view"
             data-testid={`place-${element.name}`}

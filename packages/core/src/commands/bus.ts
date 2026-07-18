@@ -12,6 +12,7 @@ import {
   assertLegalContainment,
   assertLegalEndpoints,
   assertNoCycle,
+  assertPlaceableOnView,
 } from "../metamodel/rules.js";
 import type { Command } from "./commands.js";
 
@@ -238,6 +239,7 @@ export class CommandBus {
           if (!ws.elements.has(p.elementId)) throw new Error(`Placed element does not exist: ${p.elementId}`);
           if (seen.has(p.elementId)) throw new Error(`Element placed twice: ${p.elementId}`);
           seen.add(p.elementId);
+          assertPlaceableOnView(view.kind, ws.element(p.elementId).kind);
         }
         ws.views.set(view.id, structuredClone(view));
         return { type: "deleteView", id: view.id };
@@ -274,6 +276,7 @@ export class CommandBus {
         if (view.placements.some((p) => p.elementId === placement.elementId)) {
           throw new Error(`Element is already on this view: ${placement.elementId}`);
         }
+        assertPlaceableOnView(view.kind, ws.element(placement.elementId).kind);
         view.placements = [...view.placements, structuredClone(placement)];
         return { type: "removeFromView", viewId: view.id, elementId: placement.elementId };
       }

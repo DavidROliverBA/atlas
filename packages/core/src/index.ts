@@ -1,6 +1,6 @@
 export * from "./ids.js";
 export * from "./metamodel/types.js";
-export { ModelRuleError, assertLegalContainment, assertLegalEndpoints, assertNoCycle } from "./metamodel/rules.js";
+export { ModelRuleError, VIEW_PLACEMENT, assertLegalContainment, assertLegalEndpoints, assertNoCycle, assertPlaceableOnView } from "./metamodel/rules.js";
 export { Workspace } from "./model/workspace.js";
 export type { Command, CommandType } from "./commands/commands.js";
 export { CommandBus, type BusEvent, type CommandBusOptions, type HistoryEntry } from "./commands/bus.js";

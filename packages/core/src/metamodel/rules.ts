@@ -5,7 +5,7 @@
  */
 
 import type { Ulid } from "../ids.js";
-import type { Element, ElementKind } from "./types.js";
+import type { Element, ElementKind, ViewKind } from "./types.js";
 import type { Workspace } from "../model/workspace.js";
 
 export class ModelRuleError extends Error {
@@ -17,6 +17,7 @@ export class ModelRuleError extends Error {
       | "unknown-parent"
       | "unknown-endpoint"
       | "illegal-endpoint"
+      | "illegal-placement"
       | "kind-immutable",
   ) {
     super(message);
@@ -75,6 +76,42 @@ export function assertNoCycle(ws: Workspace, element: Element, newParentId: Ulid
     }
     cursor = ws.element(cursor).parentId;
   }
+}
+
+/**
+ * Which element kinds may appear on which diagram level. This is what makes
+ * "when to use a stencil" unambiguous: people belong to context-level
+ * diagrams; components (including every cloud-service stencil) belong to
+ * component diagrams; boundaries go anywhere. Custom views are a mid-level
+ * free canvas (systems, containers, boundaries).
+ */
+export const VIEW_PLACEMENT: Record<ViewKind, readonly ElementKind[]> = {
+  landscape: ["person", "system", "group"],
+  context: ["person", "system", "group"],
+  container: ["system", "container", "group"],
+  component: ["container", "component", "group"],
+  custom: ["system", "container", "group"],
+};
+
+const VIEW_LABEL: Record<ViewKind, string> = {
+  landscape: "landscape",
+  context: "system context",
+  container: "container",
+  component: "component",
+  custom: "custom",
+};
+
+/** Throws ModelRuleError if an element kind may not appear on a view kind. */
+export function assertPlaceableOnView(viewKind: ViewKind, elementKind: ElementKind): void {
+  if (VIEW_PLACEMENT[viewKind].includes(elementKind)) return;
+  const allowedOn = (Object.keys(VIEW_PLACEMENT) as ViewKind[])
+    .filter((v) => VIEW_PLACEMENT[v].includes(elementKind))
+    .map((v) => VIEW_LABEL[v])
+    .join(", ");
+  throw new ModelRuleError(
+    `A ${label(elementKind)} cannot appear on a ${VIEW_LABEL[viewKind]} view — use it on: ${allowedOn} views.`,
+    "illegal-placement",
+  );
 }
 
 /** Relationship endpoints must exist and must not be groups. */
