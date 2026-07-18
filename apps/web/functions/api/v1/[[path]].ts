@@ -78,13 +78,10 @@ async function authorised(request: Request, env: Env): Promise<{ ok: boolean; st
 }
 
 /** Create the workspace row on first use so loads never fail on a fresh database. */
-async function ensureWorkspaceRow(
-  adapter: SupabaseStorageAdapter,
-  db: ReturnType<typeof createClient>,
-): Promise<void> {
-  try {
-    await adapter.load();
-  } catch {
+async function ensureWorkspaceRow(db: ReturnType<typeof createClient>): Promise<void> {
+  // Cheap single-row existence check — never a full workspace load.
+  const { data } = await db.from("workspaces").select("id").eq("id", DEFAULT_WORKSPACE_ID).maybeSingle();
+  if (!data) {
     await db.from("workspaces").upsert([
       { id: DEFAULT_WORKSPACE_ID, name: "Default workspace", format_version: 1, stencil_packs: [] },
     ]);
@@ -93,7 +90,7 @@ async function ensureWorkspaceRow(
 
 /** Load the workspace, creating the default row on first use. */
 async function loadWorkspace(adapter: SupabaseStorageAdapter, db: ReturnType<typeof createClient>): Promise<Workspace> {
-  await ensureWorkspaceRow(adapter, db);
+  await ensureWorkspaceRow(db);
   return adapter.load();
 }
 
@@ -126,7 +123,14 @@ export async function onRequest(context: Ctx): Promise<Response> {
 
   const workspaceId =
     new URL(request.url).searchParams.get("workspace_id") ?? DEFAULT_WORKSPACE_ID;
-  const db = createClient(SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  // Every database request gets a hard timeout: a saturated pool must fail
+  // fast (bounded function lifetime), never hang holding connections open.
+  const db = createClient(SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    global: {
+      fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+        fetch(input, { ...init, signal: AbortSignal.timeout(10_000) }),
+    },
+  });
   const adapter = new SupabaseStorageAdapter(db, workspaceId);
 
   const body = async <T>(): Promise<T> => (await request.json()) as T;
@@ -144,7 +148,7 @@ export async function onRequest(context: Ctx): Promise<Response> {
         // re-colliding in lockstep.
         await new Promise((resolve) => setTimeout(resolve, 40 * attempt + Math.random() * 150));
       }
-      await ensureWorkspaceRow(adapter, db);
+      await ensureWorkspaceRow(db);
       const { workspace: ws, revision } = await adapter.loadWithRevision();
       const bus = new CommandBus(ws);
       const ids = ulidFactory();
