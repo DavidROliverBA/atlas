@@ -36,6 +36,7 @@ export {
   type StateDiff,
   type AttributeChange,
 } from "./temporal/engine.js";
+export { toMermaidC4, toPlantUmlC4 } from "./export/text.js";
 export {
   egoNetwork,
   downstreamOf,

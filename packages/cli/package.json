@@ -1,0 +1,22 @@
+{
+  "name": "@atlas/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Atlas workspace CLI: validate, diff and export workspaces in CI.",
+  "bin": { "atlas": "./bin/atlas.js" },
+  "main": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@atlas/core": "workspace:*",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
