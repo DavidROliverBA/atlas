@@ -9,9 +9,18 @@ source-control-friendly serialisation of Structurizr.
 
 | Milestone | State |
 |---|---|
-| M0 — Foundations (metamodel, command bus, deterministic serialiser) | ✅ |
-| M1 — 2D canvas & inspector | 🚧 |
-| M2+ | planned |
+| M0 — Foundations (metamodel, command bus, deterministic serialiser) | ✅ 29 unit tests incl. golden byte-identity |
+| M1 — 2D canvas & inspector | ✅ 28 Playwright journeys |
+| M2 — C4 zoom & landscape (drill, breadcrumbs, "appears in") | ✅ |
+| M3+ | planned |
+
+![Landscape view](docs/images/landscape.png)
+
+*The landscape view: C4 palette, model tree, canvas with drill affordances, inspector.*
+
+![Container view](docs/images/container-view.png)
+
+*Drilled into a system: breadcrumbs, containers, and the inspector editing a shared model object.*
 
 ## Layout
 
