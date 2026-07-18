@@ -156,4 +156,40 @@ test.describe("connection ports, routing and colours", () => {
     const transform = await label.evaluate((el) => el.parentElement?.getAttribute("transform"));
     expect(transform).toContain("matrix(");
   });
+
+  test("long names shrink (and squeeze) to fit the iso face", async ({ page }) => {
+    await freshApp(page);
+    const longName = "Enterprise Customer Relationship Platform";
+    await canvasNode(page, "CRM").click();
+    await page.getByTestId("inspector-name").fill(longName);
+    await page.getByTestId("inspector-name").press("Enter");
+
+    await page.getByTestId("mode-iso").click();
+    const label = page
+      .locator(`[data-testid="iso-node"][data-elname="${longName}"]`)
+      .getByTestId("iso-label");
+    await expect(label).toBeVisible();
+    // Shrunk to the minimum font and glyph-squeezed to the face length.
+    await expect(label).toHaveAttribute("style", /font-size: 7px/);
+    await expect(label).toHaveAttribute("textLength", /\d+/);
+
+    // A short name keeps the full-size font and no squeeze.
+    const short = page
+      .locator('[data-testid="iso-node"][data-elname="Payments"]')
+      .getByTestId("iso-label");
+    await expect(short).toHaveAttribute("style", /font-size: 10.5px/);
+    await expect(short).not.toHaveAttribute("textLength", /.+/);
+  });
+
+  test("iso line labels share the box text angle and sit above the line", async ({ page }) => {
+    await freshApp(page);
+    await page.getByTestId("mode-iso").click();
+
+    const edgeLabel = page.getByTestId("iso-edge-label").filter({ hasText: "takes payment via" });
+    await expect(edgeLabel).toBeVisible();
+    const transform = await edgeLabel.evaluate((el) => el.parentElement?.getAttribute("transform"));
+    // Same plane matrix as the box labels, translated 10px above the line midpoint.
+    expect(transform).toContain("matrix(");
+    expect(transform).toContain("translate(");
+  });
 });

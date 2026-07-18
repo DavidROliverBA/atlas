@@ -51,6 +51,8 @@ function IsoBox({ datum, selected, onSelect }: { datum: IsoNodeDatum; selected: 
   const w = placement.width ?? (element.kind === "group" ? 18 : DEFAULT_W);
   const h = placement.height ?? (element.kind === "group" ? 12 : DEFAULT_H);
   const z = style.height;
+  // The label runs along the face's model-x edge, whose projected length is w·TILE.
+  const labelFit = fitLabel(element.name, w * TILE);
 
   // Four corners of the footprint, projected.
   const a = iso(placement.x, placement.y); // back
@@ -101,7 +103,8 @@ function IsoBox({ datum, selected, onSelect }: { datum: IsoNodeDatum; selected: 
         The label lies on the top face: the matrix maps the text's x-axis
         along the iso grid's +x direction and its y-axis along +y, so the
         baseline slants at the same angle as the box edges instead of
-        floating horizontally above the tile.
+        floating horizontally above the tile. Long names shrink (and as a
+        last resort squeeze via textLength) to stay within the face.
       */}
       <g
         transform={`translate(${datum.cx}, ${datum.cy - z}) matrix(${COS30}, ${SIN30}, ${-COS30}, ${SIN30}, 0, 0)`}
@@ -111,13 +114,31 @@ function IsoBox({ datum, selected, onSelect }: { datum: IsoNodeDatum; selected: 
           textAnchor="middle"
           dominantBaseline="central"
           className="select-none"
-          style={{ fontSize: 10.5, fontWeight: 600, fill: "#0f172a" }}
+          style={{ fontSize: labelFit.fontSize, fontWeight: 600, fill: "#0f172a" }}
+          {...(labelFit.squeeze ? { textLength: labelFit.available, lengthAdjust: "spacingAndGlyphs" } : {})}
         >
           {element.name}
         </text>
       </g>
     </g>
   );
+}
+
+/** Average glyph width as a fraction of font size (600-weight system-ui). */
+const GLYPH_RATIO = 0.6;
+const MAX_LABEL_FONT = 10.5;
+const MIN_LABEL_FONT = 7;
+
+/**
+ * Fit a name to the face-edge length it lies along: shrink the font first,
+ * then squeeze glyph spacing if the minimum font still overflows.
+ */
+function fitLabel(name: string, faceLengthPx: number): { fontSize: number; available: number; squeeze: boolean } {
+  const available = Math.max(24, faceLengthPx - 16);
+  const idealFont = available / (GLYPH_RATIO * Math.max(1, name.length));
+  const fontSize = Math.min(MAX_LABEL_FONT, Math.max(MIN_LABEL_FONT, idealFont));
+  const squeeze = name.length * fontSize * GLYPH_RATIO > available;
+  return { fontSize, available, squeeze };
 }
 
 export function IsoCanvas() {
@@ -204,21 +225,30 @@ export function IsoCanvas() {
               y1={from.cy - KIND_STYLE[from.element.kind].height / 2}
               x2={to.cx}
               y2={to.cy - KIND_STYLE[to.element.kind].height / 2}
-              stroke={selection?.type === "relationship" && selection.id === rel.id ? "#2563eb" : "#64748b"}
+              stroke={
+                selection?.type === "relationship" && selection.id === rel.id
+                  ? "#2563eb"
+                  : rel.color ?? "#64748b"
+              }
               strokeWidth={selection?.type === "relationship" && selection.id === rel.id ? 2.5 : 1.5}
               markerEnd="url(#iso-arrow)"
               {...(rel.direction === "bidirectional" ? { markerStart: "url(#iso-arrow)" } : {})}
             />
             {rel.name && (
-              <text
-                x={(from.cx + to.cx) / 2}
-                y={(from.cy + to.cy) / 2 - 6}
-                textAnchor="middle"
-                style={{ fontSize: 10, fill: "#334155" }}
-                className="select-none"
+              /* Line labels share the boxes' text plane, lifted above the line. */
+              <g
+                transform={`translate(${(from.cx + to.cx) / 2}, ${(from.cy + to.cy) / 2 - 10}) matrix(${COS30}, ${SIN30}, ${-COS30}, ${SIN30}, 0, 0)`}
               >
-                {rel.name}
-              </text>
+                <text
+                  data-testid="iso-edge-label"
+                  textAnchor="middle"
+                  dominantBaseline="text-after-edge"
+                  style={{ fontSize: 9.5, fill: rel.color ?? "#334155" }}
+                  className="select-none"
+                >
+                  {rel.name}
+                </text>
+              </g>
             )}
           </g>
         ))}
