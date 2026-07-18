@@ -3,7 +3,14 @@ export * from "./metamodel/types.js";
 export { ModelRuleError, assertLegalContainment, assertLegalEndpoints, assertNoCycle } from "./metamodel/rules.js";
 export { Workspace } from "./model/workspace.js";
 export type { Command, CommandType } from "./commands/commands.js";
-export { CommandBus, type BusEvent, type HistoryEntry } from "./commands/bus.js";
+export { CommandBus, type BusEvent, type CommandBusOptions, type HistoryEntry } from "./commands/bus.js";
+export {
+  StencilRegistry,
+  packRef,
+  type Stencil,
+  type StencilCategory,
+  type StencilPack,
+} from "./stencils/packs.js";
 export { stringifyCanonical, compareKeys, sortedSet, dropEmpty } from "./serialize/canonical.js";
 export {
   workspaceToFiles,

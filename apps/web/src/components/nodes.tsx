@@ -1,6 +1,7 @@
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import type { Element } from "@atlas/core";
 import { KIND_LABELS, stencilFor } from "../stencils";
+import { stencilRegistry } from "../store";
 
 export type AtlasNodeData = {
   element: Element;
@@ -43,10 +44,20 @@ export function AtlasElementNode({ data, selected }: NodeProps<AtlasNode>) {
       )}
       <Handle type="target" position={Position.Left} />
       <div className="flex items-start justify-between gap-1">
-        <div className="min-w-0">
+        {element.stencil && (
+          <span
+            data-testid="stencil-symbol"
+            className="mt-0.5 h-6 w-6 shrink-0 [&_svg]:h-full [&_svg]:w-full"
+            dangerouslySetInnerHTML={{
+              __html: stencilRegistry.stencil(element.stencil)?.symbol2d ?? "",
+            }}
+          />
+        )}
+        <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold leading-tight">{element.name}</div>
           <div className="text-[10px] uppercase tracking-wide opacity-60">
-            {KIND_LABELS[element.kind]}
+            {stencilRegistry.stencil(element.stencil ?? { pack: "", stencil: "" })?.name ??
+              KIND_LABELS[element.kind]}
             {element.technology?.length ? ` · ${element.technology.join(", ")}` : ""}
           </div>
         </div>

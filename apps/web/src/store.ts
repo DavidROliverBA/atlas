@@ -18,7 +18,16 @@ import {
   type View,
   type ViewKind,
 } from "@atlas/core";
+import { builtinRegistry } from "@atlas/stencils";
 import { buildSeedWorkspace } from "./seed";
+
+/** All built-in packs, with attribute validation wired into the command bus. */
+export const stencilRegistry = builtinRegistry();
+
+/** Pack ids enabled in a workspace manifest ("aws@1" → "aws"). */
+export function enabledPackIds(ws: Workspace): string[] {
+  return (ws.meta.stencilPacks ?? []).map((ref) => ref.split("@")[0]!);
+}
 
 export const GRID = 20;
 /** Default element footprint in grid units. */
@@ -90,7 +99,7 @@ const ids = ulidFactory();
 
 function makePair(): { ws: Workspace; bus: CommandBus } {
   const ws = loadPersisted() ?? buildSeedWorkspace(ids);
-  return { ws, bus: new CommandBus(ws) };
+  return { ws, bus: new CommandBus(ws, { stencils: stencilRegistry }) };
 }
 
 export const useAtlas = create<AtlasStore>((set, get) => {
@@ -169,13 +178,13 @@ export const useAtlas = create<AtlasStore>((set, get) => {
     resetToDemo() {
       localStorage.removeItem(STORAGE_KEY);
       const ws = buildSeedWorkspace(ids);
-      const bus = new CommandBus(ws);
+      const bus = new CommandBus(ws, { stencils: stencilRegistry });
       set({ ws, bus, activeViewId: firstViewId(ws), selection: null, rev: get().rev + 1 });
       persist(ws);
     },
 
     replaceWorkspace(ws) {
-      const bus = new CommandBus(ws);
+      const bus = new CommandBus(ws, { stencils: stencilRegistry });
       set({ ws, bus, activeViewId: firstViewId(ws), selection: null, rev: get().rev + 1 });
       persist(ws);
     },

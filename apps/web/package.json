@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@atlas/core": "workspace:*",
+    "@atlas/stencils": "workspace:^",
     "@xyflow/react": "^12.3.0",
     "framer-motion": "^11.11.0",
     "react": "^18.3.1",

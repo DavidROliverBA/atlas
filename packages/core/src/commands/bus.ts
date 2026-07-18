@@ -60,12 +60,26 @@ function checkTemporal(ws: Workspace, temporal: Temporal | null | undefined): vo
   }
 }
 
+export interface CommandBusOptions {
+  /** When provided, stencil refs and their attributes are validated at command time. */
+  stencils?: { validateRef(ref: NonNullable<Element["stencil"]>): string[] };
+}
+
 export class CommandBus {
   private undoStack: HistoryEntry[] = [];
   private redoStack: HistoryEntry[] = [];
   private listeners = new Set<Listener>();
 
-  constructor(readonly workspace: Workspace) {}
+  constructor(
+    readonly workspace: Workspace,
+    private readonly options: CommandBusOptions = {},
+  ) {}
+
+  private checkStencil(stencil: Element["stencil"] | null | undefined): void {
+    if (!stencil || !this.options.stencils) return;
+    const issues = this.options.stencils.validateRef(stencil);
+    if (issues.length) throw new Error(issues.join("; "));
+  }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -125,6 +139,7 @@ export class CommandBus {
         if (ws.elements.has(el.id)) throw new Error(`Element already exists: ${el.id}`);
         assertLegalContainment(ws, el.kind, el.parentId);
         checkTemporal(ws, el.temporal);
+        this.checkStencil(el.stencil);
         ws.elements.set(el.id, structuredClone(el));
         return { type: "deleteElement", id: el.id };
       }
@@ -148,6 +163,7 @@ export class CommandBus {
         if (changes.name !== undefined && changes.name !== null && changes.name.trim() === "") {
           throw new Error("Element name cannot be empty");
         }
+        if (changes.stencil !== undefined) this.checkStencil(changes.stencil);
         const inverse = applyChanges(el, changes);
         return { type: "updateElement", id: command.id, changes: inverse };
       }
@@ -321,6 +337,14 @@ export class CommandBus {
         for (const rel of ws.relationships.values()) scrub(rel, false);
         ws.states.delete(state.id);
         return { type: "batch", commands: restore };
+      }
+
+      case "updateWorkspaceMeta": {
+        if (command.changes.name !== undefined && command.changes.name !== null && !command.changes.name.trim()) {
+          throw new Error("Workspace name cannot be empty");
+        }
+        const inverse = applyChanges(ws.meta, command.changes as Partial<typeof ws.meta>);
+        return { type: "updateWorkspaceMeta", changes: inverse };
       }
 
       case "batch": {

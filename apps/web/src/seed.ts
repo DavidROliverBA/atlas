@@ -14,7 +14,11 @@ import {
 } from "@atlas/core";
 
 export function buildSeedWorkspace(ids: UlidFactory): Workspace {
-  const ws = new Workspace({ name: "Demo estate", description: "Seeded demo — replace with your own model" });
+  const ws = new Workspace({
+    name: "Demo estate",
+    description: "Seeded demo — replace with your own model",
+    stencilPacks: ["c4-core@1", "generic-tech@1"],
+  });
   const bus = new CommandBus(ws);
 
   const el = (partial: Omit<Element, "id">): Element => {

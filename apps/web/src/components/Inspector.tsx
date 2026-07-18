@@ -2,7 +2,7 @@ import { useState } from "react";
 import Markdown from "react-markdown";
 import type { Criticality, Element, Lifecycle, Relationship, Ulid } from "@atlas/core";
 import { KIND_LABELS } from "../stencils";
-import { useAtlas } from "../store";
+import { stencilRegistry, useAtlas } from "../store";
 
 const STATUSES: Lifecycle[] = ["proposed", "planned", "live", "deprecated", "decommissioned"];
 const CRITICALITIES: Criticality[] = ["low", "medium", "high", "critical"];
@@ -171,6 +171,8 @@ function ElementInspector({ element }: { element: Element }) {
         />
       </Field>
 
+      {element.stencil && <StencilAttributes element={element} />}
+
       <div className="grid grid-cols-2 gap-2">
         <Field label="Owners">
           <input
@@ -258,6 +260,60 @@ function ElementInspector({ element }: { element: Element }) {
         >
           Delete from model…
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Pack-specific attribute editor, generated from the stencil's JSON Schema
+ * (e.g. AWS account id / region). Values validate at command time, so bad
+ * input surfaces the same error the AI or CLI would get.
+ */
+function StencilAttributes({ element }: { element: Element }) {
+  const dispatch = useAtlas((s) => s.dispatch);
+  const ref = element.stencil!;
+  const stencil = stencilRegistry.stencil(ref);
+  const schema = stencil?.attributeSchema as
+    | { properties?: Record<string, { type?: string; description?: string; pattern?: string }> }
+    | undefined;
+  if (!stencil || !schema?.properties) return null;
+
+  const attributes = (ref.attributes ?? {}) as Record<string, unknown>;
+
+  const setAttr = (key: string, raw: string) => {
+    const next = { ...attributes };
+    if (raw.trim() === "") delete next[key];
+    else next[key] = schema.properties?.[key]?.type === "number" ? Number(raw) : raw.trim();
+    dispatch({
+      type: "updateElement",
+      id: element.id,
+      changes: {
+        stencil: { ...ref, ...(Object.keys(next).length ? { attributes: next } : {}) },
+      } as never,
+    });
+  };
+
+  return (
+    <div data-testid="stencil-attributes">
+      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+        {stencil.name} attributes
+      </span>
+      <div className="flex flex-col gap-2">
+        {Object.entries(schema.properties).map(([key, prop]) => (
+          <Field key={key} label={key}>
+            <input
+              key={`${element.id}-${key}`}
+              data-testid={`attr-${key}`}
+              className={inputClass}
+              defaultValue={String(attributes[key] ?? "")}
+              placeholder={prop.description ?? prop.pattern ?? ""}
+              onBlur={(e) => {
+                if (e.target.value.trim() !== String(attributes[key] ?? "")) setAttr(key, e.target.value);
+              }}
+            />
+          </Field>
+        ))}
       </div>
     </div>
   );

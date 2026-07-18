@@ -12,6 +12,7 @@ import type {
   Placement,
   Relationship,
   View,
+  WorkspaceMeta,
 } from "../metamodel/types.js";
 
 export type Command =
@@ -30,6 +31,7 @@ export type Command =
   | { type: "createState"; state: NamedState }
   | { type: "updateState"; id: Ulid; changes: Partial<Omit<NamedState, "id">> }
   | { type: "deleteState"; id: Ulid }
+  | { type: "updateWorkspaceMeta"; changes: Partial<Omit<WorkspaceMeta, "formatVersion">> }
   | { type: "batch"; label?: string; commands: Command[] };
 
 export type CommandType = Command["type"];
