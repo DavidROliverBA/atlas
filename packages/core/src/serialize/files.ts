@@ -58,6 +58,7 @@ function normaliseElement(e: Element): Element {
     tags: sortedSet(e.tags),
     links: dropEmpty(e.links),
     properties: dropEmpty(e.properties),
+    color: e.color,
     stencil: e.stencil,
     temporal: normaliseTemporal(e.temporal),
     stateOverrides: dropEmpty(e.stateOverrides),
@@ -75,6 +76,7 @@ function normaliseRelationship(r: Relationship): Relationship {
     direction: r.direction,
     tags: sortedSet(r.tags),
     properties: dropEmpty(r.properties),
+    color: r.color,
     temporal: normaliseTemporal(r.temporal),
   };
 }
@@ -97,6 +99,7 @@ function normaliseView(v: View): View {
         height: p.height,
       })),
     hiddenRelationshipIds: sortedSet(v.hiddenRelationshipIds),
+    edgeAnchors: dropEmpty(v.edgeAnchors),
   };
 }
 
@@ -223,6 +226,11 @@ export function checkIntegrity(ws: Workspace): void {
     }
     for (const relId of v.hiddenRelationshipIds ?? []) {
       if (!ws.relationships.has(relId)) problems.push(`View ${v.id} hides unknown relationship ${relId}`);
+    }
+    for (const relId of Object.keys(v.edgeAnchors ?? {})) {
+      if (!ws.relationships.has(relId)) {
+        problems.push(`View ${v.id} anchors unknown relationship ${relId}`);
+      }
     }
   }
   if (problems.length) {

@@ -9,6 +9,7 @@ import {
   workspaceToFiles,
 } from "@atlas/core";
 import { useAtlas } from "../store";
+import { autoLayoutCommands } from "../autolayout";
 
 function download(filename: string, content: string, type: string): void {
   const a = document.createElement("a");
@@ -149,6 +150,18 @@ export function Toolbar() {
         ↪ Redo
       </button>
       <span className="mx-2 h-5 w-px bg-slate-200" />
+      <button
+        data-testid="auto-layout"
+        className={btn}
+        title="Re-arrange the current view with ELK (layered); one undo step"
+        onClick={() => {
+          void autoLayoutCommands(ws, activeViewId).then((batch) => {
+            if (batch) useAtlas.getState().dispatch(batch);
+          });
+        }}
+      >
+        Auto-layout
+      </button>
       <button
         data-testid="open-analysis"
         className={btn}

@@ -81,6 +81,8 @@ export interface Element {
   links?: ExternalLink[];
   /** Free-form key–value properties. */
   properties?: Record<string, string>;
+  /** Custom box colour (hex, e.g. "#0ea5e9"); overrides the kind/stencil default. */
+  color?: string;
   stencil?: StencilRef;
   temporal?: Temporal;
   /** Keyed by state id. */
@@ -100,6 +102,8 @@ export interface Relationship {
   direction?: RelationshipDirection;
   tags?: string[];
   properties?: Record<string, string>;
+  /** Custom line colour (hex). */
+  color?: string;
   temporal?: Temporal;
 }
 
@@ -135,6 +139,13 @@ export interface View {
    * relationship whose endpoints are both placed is shown.
    */
   hiddenRelationshipIds?: Ulid[];
+  /**
+   * Per-view routing: which connection ports a relationship's line is pinned
+   * to on this view (port ids: t0–t4, b0–b4, l0–l2, r0–r2). Relationships
+   * without an entry are auto-routed: aligned boxes get straight lines via
+   * facing mid-ports.
+   */
+  edgeAnchors?: Record<Ulid, { source: string; target: string }>;
 }
 
 /** A named state such as "Current", "Q4 2026 Transition" or "Target 2028". */

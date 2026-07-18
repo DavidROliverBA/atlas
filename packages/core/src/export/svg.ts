@@ -25,6 +25,18 @@ const FILL: Record<Element["kind"], { bg: string; border: string }> = {
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+/** Mix a #rrggbb colour towards white (amount 0..1) for a soft box fill. */
+function tint(hex: string, amount: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (shift: number) => {
+    const c = (n >> shift) & 0xff;
+    return Math.round(c + (255 - c) * amount)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${ch(16)}${ch(8)}${ch(0)}`;
+}
+
 export function toSvg(ws: Workspace, viewId: Ulid): string {
   const view = ws.view(viewId);
   const boxes = [...view.placements]
@@ -48,7 +60,9 @@ export function toSvg(ws: Workspace, viewId: Ulid): string {
 
   // Groups first (background), then elements.
   for (const b of [...boxes].sort((a, c) => Number(c.el.kind === "group") - Number(a.el.kind === "group"))) {
-    const fill = FILL[b.el.kind];
+    const fill = b.el.color
+      ? { bg: tint(b.el.color, 0.85), border: b.el.color }
+      : FILL[b.el.kind];
     const dash = b.el.kind === "group" ? ' stroke-dasharray="6 4"' : "";
     parts.push(
       `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="12" fill="${fill.bg}" stroke="${fill.border}" stroke-width="2"${dash}/>`,
@@ -71,12 +85,13 @@ export function toSvg(ws: Workspace, viewId: Ulid): string {
     const y1 = from.y + from.h / 2;
     const x2 = to.x + to.w / 2;
     const y2 = to.y + to.h / 2;
+    const stroke = r.color ?? "#64748b";
     parts.push(
-      `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>`,
+      `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="1.5" marker-end="url(#arrow)"/>`,
     );
     if (r.name) {
       parts.push(
-        `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 6}" font-size="10" fill="#334155" text-anchor="middle" font-family="system-ui,sans-serif">${esc(r.name)}</text>`,
+        `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 6}" font-size="10" fill="${r.color ?? "#334155"}" text-anchor="middle" font-family="system-ui,sans-serif">${esc(r.name)}</text>`,
       );
     }
   }

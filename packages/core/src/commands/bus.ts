@@ -242,6 +242,9 @@ export class CommandBus {
         for (const relId of changes.hiddenRelationshipIds ?? []) {
           if (!ws.relationships.has(relId)) throw new Error(`Unknown relationship hidden: ${relId}`);
         }
+        for (const relId of Object.keys(changes.edgeAnchors ?? {})) {
+          if (!ws.relationships.has(relId)) throw new Error(`Unknown relationship anchored: ${relId}`);
+        }
         const inverse = applyChanges(view, changes);
         return { type: "updateView", id: command.id, changes: inverse };
       }
@@ -363,7 +366,7 @@ export class CommandBus {
     }
   }
 
-  /** Remove a relationship plus any per-view "hidden" references to it; return restore commands. */
+  /** Remove a relationship plus any per-view references (hidden list, edge anchors); return restore commands. */
   private cascadeDeleteRelationship(relId: Ulid): Command[] {
     const ws = this.workspace;
     const rel = ws.relationship(relId);
@@ -378,6 +381,17 @@ export class CommandBus {
         const remaining = view.hiddenRelationshipIds.filter((id) => id !== relId);
         if (remaining.length) view.hiddenRelationshipIds = remaining;
         else delete view.hiddenRelationshipIds;
+      }
+      if (view.edgeAnchors?.[relId]) {
+        restore.push({
+          type: "updateView",
+          id: view.id,
+          changes: { edgeAnchors: structuredClone(view.edgeAnchors) },
+        });
+        const anchors = { ...view.edgeAnchors };
+        delete anchors[relId];
+        if (Object.keys(anchors).length) view.edgeAnchors = anchors;
+        else delete view.edgeAnchors;
       }
     }
     ws.relationships.delete(relId);

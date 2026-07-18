@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
+  ConnectionMode,
   Controls,
   MarkerType,
+  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   applyNodeChanges,
@@ -12,6 +14,7 @@ import {
   type NodeChange,
   type Node,
 } from "@xyflow/react";
+import { autoRoute, pinnedPortsAligned, type Box } from "../ports";
 import { motion } from "framer-motion";
 import {
   diffContexts,
@@ -99,6 +102,19 @@ function CanvasInner() {
     const displayCtx = diffPair ? diffPair.b : temporal;
 
     const placed = new Set(view.placements.map((p) => p.elementId));
+    // Box geometry in px, for routing decisions.
+    const boxes = new Map<Ulid, Box>();
+    for (const p of view.placements) {
+      const el = ws.elements.get(p.elementId);
+      if (!el) continue;
+      const isGroup = el.kind === "group";
+      boxes.set(p.elementId, {
+        x: p.x * GRID,
+        y: p.y * GRID,
+        w: (p.width ?? (isGroup ? GROUP_W : DEFAULT_W)) * GRID,
+        h: (p.height ?? (isGroup ? GROUP_H : DEFAULT_H)) * GRID,
+      });
+    }
     const nodes = view.placements
       .map((p) => {
         const el = ws.elements.get(p.elementId);
@@ -124,27 +140,43 @@ function CanvasInner() {
           elementVisible(r.targetId) &&
           !view.hiddenRelationshipIds?.includes(r.id),
       )
-      .map((r) => ({
-        ...(diff
+      .map((r) => {
+        // Routing: pinned ports from the view, else the auto-route rule
+        // (aligned boxes → facing mid-ports → straight line).
+        const fromBox = boxes.get(r.sourceId)!;
+        const toBox = boxes.get(r.targetId)!;
+        const pinned = view.edgeAnchors?.[r.id];
+        const route = pinned
           ? {
-              style: diff.addedRelationships.includes(r.id)
-                ? { stroke: "#10b981", strokeWidth: 2 }
-                : diff.removedRelationships.includes(r.id)
-                  ? { stroke: "#ef4444", strokeDasharray: "6 4", strokeWidth: 2 }
-                  : undefined,
+              source: pinned.source,
+              target: pinned.target,
+              straight: pinnedPortsAligned(fromBox, toBox, pinned.source, pinned.target),
             }
-          : {}),
-        id: r.id,
-        source: r.sourceId,
-        target: r.targetId,
-        label: r.name,
-        type: "smoothstep",
-        selected: selection?.type === "relationship" && selection.id === r.id,
-        markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
-        ...(r.direction === "bidirectional"
-          ? { markerStart: { type: MarkerType.ArrowClosed, color: "#64748b" } }
-          : {}),
-      }));
+          : autoRoute(fromBox, toBox);
+        const stroke = r.color ?? "#64748b";
+        const diffStyle = diff
+          ? diff.addedRelationships.includes(r.id)
+            ? { stroke: "#10b981", strokeWidth: 2 }
+            : diff.removedRelationships.includes(r.id)
+              ? { stroke: "#ef4444", strokeDasharray: "6 4", strokeWidth: 2 }
+              : undefined
+          : undefined;
+        return {
+          id: r.id,
+          source: r.sourceId,
+          target: r.targetId,
+          sourceHandle: route.source,
+          targetHandle: route.target,
+          label: r.name,
+          type: route.straight ? "straight" : "smoothstep",
+          selected: selection?.type === "relationship" && selection.id === r.id,
+          style: diffStyle ?? (r.color ? { stroke, strokeWidth: 2 } : undefined),
+          markerEnd: { type: MarkerType.ArrowClosed, color: diffStyle?.stroke ?? stroke },
+          ...(r.direction === "bidirectional"
+            ? { markerStart: { type: MarkerType.ArrowClosed, color: diffStyle?.stroke ?? stroke } }
+            : {}),
+        };
+      });
     return { nodes, edges };
   }, [ws, rev, activeViewId, selection, temporal, diffPair, highlightTag]);
 
@@ -187,13 +219,32 @@ function CanvasInner() {
       if (!connection.source || !connection.target) return;
       if (connection.source === connection.target) return;
       const id = newId();
-      const error = dispatch({
-        type: "createRelationship",
-        relationship: { id, sourceId: connection.source as Ulid, targetId: connection.target as Ulid, name: "uses" },
-      });
+      const view = ws.views.get(activeViewId);
+      const commands: Parameters<typeof dispatch>[0][] = [
+        {
+          type: "createRelationship",
+          relationship: { id, sourceId: connection.source as Ulid, targetId: connection.target as Ulid, name: "uses" },
+        },
+      ];
+      // Pin the line to the ports the user actually dragged between.
+      if (view && connection.sourceHandle && connection.targetHandle) {
+        commands.push({
+          type: "updateView",
+          id: view.id,
+          changes: {
+            edgeAnchors: {
+              ...(view.edgeAnchors ?? {}),
+              [id]: { source: connection.sourceHandle, target: connection.targetHandle },
+            },
+          },
+        });
+      }
+      const error = dispatch(
+        commands.length > 1 ? { type: "batch", label: "Connect", commands } : commands[0]!,
+      );
       if (!error) select({ type: "relationship", id });
     },
-    [dispatch, newId, select],
+    [dispatch, newId, select, ws, activeViewId],
   );
 
   const onNodeDoubleClick = useCallback(
@@ -222,12 +273,14 @@ function CanvasInner() {
         onNodeDoubleClick={onNodeDoubleClick}
         snapToGrid
         snapGrid={[GRID, GRID]}
+        connectionMode={ConnectionMode.Loose}
         proOptions={{ hideAttribution: true }}
         fitView
         minZoom={0.2}
       >
         <Background gap={GRID} color="#e2e8f0" />
         <Controls showInteractive={false} />
+        <MiniMap pannable zoomable className="!h-28 !w-44" nodeStrokeWidth={3} />
       </ReactFlow>
     </div>
   );

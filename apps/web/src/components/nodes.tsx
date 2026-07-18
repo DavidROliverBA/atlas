@@ -1,7 +1,42 @@
-import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
+import { Handle, type NodeProps, type Node } from "@xyflow/react";
 import type { Element } from "@atlas/core";
 import { KIND_LABELS, stencilFor } from "../stencils";
 import { stencilRegistry } from "../store";
+import { PORTS } from "../ports";
+
+/** Mix a #rrggbb colour towards white (amount 0..1) for a soft box fill. */
+function tint(hex: string, amount: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (shift: number) => {
+    const c = (n >> shift) & 0xff;
+    return Math.round(c + (255 - c) * amount)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${ch(16)}${ch(8)}${ch(0)}`;
+}
+
+/** All 16 connection ports (5 top, 5 bottom, 3 per side). */
+function NodePorts() {
+  return (
+    <>
+      {PORTS.map((port) => (
+        <Handle
+          key={port.id}
+          id={port.id}
+          type="source"
+          position={port.position}
+          className="atlas-port"
+          style={
+            port.side === "top" || port.side === "bottom"
+              ? { left: `${port.frac * 100}%` }
+              : { top: `${port.frac * 100}%` }
+          }
+        />
+      ))}
+    </>
+  );
+}
 
 export type AtlasNodeData = {
   element: Element;
@@ -28,12 +63,16 @@ const DIFF_BADGE: Record<NonNullable<AtlasNodeData["diffStatus"]>, { label: stri
 export function AtlasElementNode({ data, selected }: NodeProps<AtlasNode>) {
   const { element, drillable, diffStatus, tagged } = data;
   const stencil = stencilFor(element.kind);
+  const customStyle = element.color
+    ? { background: tint(element.color, 0.85), borderColor: element.color }
+    : undefined;
   return (
     <div
       data-testid="canvas-node"
       data-elname={element.name}
       data-diff={diffStatus}
       data-tagged={tagged ? "true" : undefined}
+      style={customStyle}
       className={`atlas-fade-in relative h-full w-full rounded-xl border-2 px-3 py-2 shadow-sm transition-shadow ${stencil.nodeClass} ${
         selected
           ? "ring-2 ring-blue-500 ring-offset-2"
@@ -51,7 +90,7 @@ export function AtlasElementNode({ data, selected }: NodeProps<AtlasNode>) {
           {DIFF_BADGE[diffStatus].label}
         </span>
       )}
-      <Handle type="target" position={Position.Left} />
+      <NodePorts />
       <div className="flex items-start justify-between gap-1">
         {element.stencil && (
           <span
@@ -83,7 +122,6 @@ export function AtlasElementNode({ data, selected }: NodeProps<AtlasNode>) {
       {element.description && (
         <div className="mt-1 line-clamp-2 text-xs opacity-80">{element.description}</div>
       )}
-      <Handle type="source" position={Position.Right} />
     </div>
   );
 }

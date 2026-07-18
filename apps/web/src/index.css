@@ -15,6 +15,21 @@ body,
   border: 2px solid white;
 }
 
+/* Connection ports: subtle until the box is hovered or a line is being drawn. */
+.atlas-port {
+  width: 8px;
+  height: 8px;
+  background: #94a3b8;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.react-flow__node:hover .atlas-port,
+.react-flow.connecting .atlas-port,
+.react-flow__node.selected .atlas-port {
+  opacity: 1;
+}
+
 .react-flow__edge-path {
   stroke: #64748b;
   stroke-width: 1.5;

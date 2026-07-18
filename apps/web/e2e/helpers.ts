@@ -35,16 +35,25 @@ export async function settle(page: Page): Promise<void> {
   }
 }
 
-/** Drag a connection from one node's source handle to another node's target handle. */
-export async function connectNodes(page: Page, from: string, to: string): Promise<void> {
+/** Drag a connection between two nodes' ports (defaults: right-mid → left-mid). */
+export async function connectNodes(
+  page: Page,
+  from: string,
+  to: string,
+  fromPort = "r1",
+  toPort = "l1",
+): Promise<void> {
   await settle(page);
-  const source = rfNode(page, from).locator('.react-flow__handle[data-handlepos="right"]');
-  const target = rfNode(page, to).locator('.react-flow__handle[data-handlepos="left"]');
+  // Ports fade in on hover; hover each node first so they are interactable.
+  await rfNode(page, from).hover();
+  const source = rfNode(page, from).locator(`.react-flow__handle[data-handleid="${fromPort}"]`);
   const sBox = await source.boundingBox();
-  const tBox = await target.boundingBox();
-  if (!sBox || !tBox) throw new Error("Handles not visible");
+  if (!sBox) throw new Error("Source port not visible");
   await page.mouse.move(sBox.x + sBox.width / 2, sBox.y + sBox.height / 2);
   await page.mouse.down();
+  const target = rfNode(page, to).locator(`.react-flow__handle[data-handleid="${toPort}"]`);
+  const tBox = await target.boundingBox();
+  if (!tBox) throw new Error("Target port not visible");
   await page.mouse.move(tBox.x + tBox.width / 2, tBox.y + tBox.height / 2, { steps: 12 });
   await page.mouse.up();
 }

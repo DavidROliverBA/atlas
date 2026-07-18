@@ -33,21 +33,25 @@ Required: `id` (ULID), `kind` (`person | system | container | component | group`
 Optional: `description`, `documentation` (Markdown), `technology[]`, `owners[]`,
 `team`, `status` (`proposed | planned | live | deprecated | decommissioned`),
 `criticality` (`low | medium | high | critical`), `tags[]` (sorted), `links[]`
-(`{title, url}`), `properties` (string map), `stencil` (`{pack, stencil, attributes}`),
+(`{title, url}`), `properties` (string map), `color` (`#rrggbb` box colour),
+`stencil` (`{pack, stencil, attributes}`),
 `temporal` (`{validFrom?, validTo?, states[]?}` — ISO dates, sorted state ids),
 `stateOverrides` (state id → `{name?, description?, technology?, status?, tags?}`).
 
 ### model/relationships/*.json
 Required: `id`, `sourceId`, `targetId`. Optional: `name` (verb phrase), `description`,
 `technology[]`, `direction` (`forward | bidirectional`), `tags[]`, `properties`,
-`temporal`. Endpoints may not be groups.
+`color` (`#rrggbb` line colour), `temporal`. Endpoints may not be groups.
 
 ### views/*.json
 Required: `id`, `kind` (`landscape | context | container | component | custom`),
 `name`, `scopeId` (element the view is about; `null` for landscape/custom),
 `placements[]` (`{elementId, x, y, width?, height?}` in grid units, sorted by
 elementId). Optional: `description`, `renderMode` (`2d | isometric`),
-`hiddenRelationshipIds[]`. Views never contain model data — only references
+`hiddenRelationshipIds[]`, `edgeAnchors` (relationship id → `{source, target}`
+connection ports, ids `t0–t4 | b0–b4 | l0–l2 | r0–r2` — pins a line to specific
+ports on this view; unpinned lines auto-route, giving straight horizontal/vertical
+lines between grid-aligned boxes). Views never contain model data — only references
 and geometry.
 
 ### states/*.json

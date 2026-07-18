@@ -108,6 +108,7 @@ export class ChangeSetBuilder {
     description?: string;
     technology?: string[];
     tags?: string[];
+    color?: string;
   }): Element {
     const parentId = input.parent ? this.resolveElement(input.parent).id : null;
     const element: Element = {
@@ -118,6 +119,7 @@ export class ChangeSetBuilder {
       ...(input.description ? { description: input.description } : {}),
       ...(input.technology?.length ? { technology: input.technology } : {}),
       ...(input.tags?.length ? { tags: input.tags } : {}),
+      ...(input.color ? { color: input.color } : {}),
     };
     this.push(
       { type: "createElement", element },

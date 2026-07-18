@@ -24,6 +24,10 @@ const stringMap = {
   additionalProperties: { type: "string" },
 } as const;
 
+const color = { type: "string", pattern: "^#[0-9a-fA-F]{6}$" } as const;
+
+const PORT_PATTERN = "^[tb][0-4]$|^[lr][0-2]$";
+
 export const workspaceSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://atlas.dev/schemas/workspace.json",
@@ -70,6 +74,7 @@ export const elementSchema = {
       },
     },
     properties: stringMap,
+    color,
     stencil: {
       type: "object",
       additionalProperties: false,
@@ -116,6 +121,7 @@ export const relationshipSchema = {
     direction: { enum: ["forward", "bidirectional"] },
     tags: stringArray,
     properties: stringMap,
+    color,
     temporal,
   },
 } as const;
@@ -150,6 +156,19 @@ export const viewSchema = {
       },
     },
     hiddenRelationshipIds: { type: "array", items: { type: "string", pattern: ULID_PATTERN }, minItems: 1 },
+    edgeAnchors: {
+      type: "object",
+      propertyNames: { pattern: ULID_PATTERN },
+      additionalProperties: {
+        type: "object",
+        additionalProperties: false,
+        required: ["source", "target"],
+        properties: {
+          source: { type: "string", pattern: PORT_PATTERN },
+          target: { type: "string", pattern: PORT_PATTERN },
+        },
+      },
+    },
   },
 } as const;
 

@@ -7,6 +7,15 @@ import { stencilRegistry, useAtlas } from "../store";
 const STATUSES: Lifecycle[] = ["proposed", "planned", "live", "deprecated", "decommissioned"];
 const CRITICALITIES: Criticality[] = ["low", "medium", "high", "critical"];
 
+/** Shown in the colour picker before a custom colour is set. */
+const KIND_DEFAULT_COLOR: Record<Element["kind"], string> = {
+  person: "#a78bfa",
+  system: "#38bdf8",
+  container: "#2dd4bf",
+  component: "#fbbf24",
+  group: "#94a3b8",
+};
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
@@ -169,6 +178,27 @@ function ElementInspector({ element }: { element: Element }) {
           defaultValue={element.tags?.join(", ") ?? ""}
           onBlur={(e) => update({ tags: listFrom(e.target.value) })}
         />
+      </Field>
+
+      <Field label="Box colour">
+        <div className="flex items-center gap-2">
+          <input
+            data-testid="inspector-color"
+            type="color"
+            className="h-8 w-14 cursor-pointer rounded border border-slate-300 bg-white"
+            value={element.color ?? KIND_DEFAULT_COLOR[element.kind]}
+            onChange={(e) => update({ color: e.target.value })}
+          />
+          {element.color && (
+            <button
+              data-testid="inspector-color-reset"
+              onClick={() => update({ color: null })}
+              className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200"
+            >
+              Reset to default
+            </button>
+          )}
+        </div>
       </Field>
 
       {element.stencil && <StencilAttributes element={element} />}
@@ -375,12 +405,15 @@ function RelationshipInspector({ relationship }: { relationship: Relationship })
   const ws = useAtlas((s) => s.ws);
   const dispatch = useAtlas((s) => s.dispatch);
   const select = useAtlas((s) => s.select);
+  const activeViewId = useAtlas((s) => s.activeViewId);
 
   const update = (changes: Record<string, unknown>) =>
     dispatch({ type: "updateRelationship", id: relationship.id, changes: changes as never });
 
   const source = ws.elements.get(relationship.sourceId);
   const target = ws.elements.get(relationship.targetId);
+  const activeView = ws.views.get(activeViewId);
+  const pinnedRoute = activeView?.edgeAnchors?.[relationship.id];
 
   return (
     <div className="flex flex-col gap-3" data-testid="inspector-relationship">
@@ -433,6 +466,43 @@ function RelationshipInspector({ relationship }: { relationship: Relationship })
           onBlur={(e) => update({ tags: listFrom(e.target.value) })}
         />
       </Field>
+      <Field label="Line colour">
+        <div className="flex items-center gap-2">
+          <input
+            data-testid="inspector-rel-color"
+            type="color"
+            className="h-8 w-14 cursor-pointer rounded border border-slate-300 bg-white"
+            value={relationship.color ?? "#64748b"}
+            onChange={(e) => update({ color: e.target.value })}
+          />
+          {relationship.color && (
+            <button
+              data-testid="inspector-rel-color-reset"
+              onClick={() => update({ color: null })}
+              className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+      </Field>
+      {pinnedRoute && activeView && (
+        <button
+          data-testid="reset-routing"
+          onClick={() => {
+            const anchors = { ...activeView.edgeAnchors };
+            delete anchors[relationship.id];
+            dispatch({
+              type: "updateView",
+              id: activeView.id,
+              changes: { edgeAnchors: (Object.keys(anchors).length ? anchors : null) as never },
+            });
+          }}
+          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+        >
+          Reset routing on this view (ports {pinnedRoute.source} → {pinnedRoute.target})
+        </button>
+      )}
       <button
         data-testid="delete-relationship"
         onClick={() => {
