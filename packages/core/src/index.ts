@@ -39,6 +39,7 @@ export {
 export { toMermaidC4, toPlantUmlC4 } from "./export/text.js";
 export { toSvg } from "./export/svg.js";
 export { importStructurizr, type StructurizrWorkspace, type StructurizrImportResult } from "./interop/structurizr.js";
+export { importArchimate, type ArchimateImportResult } from "./interop/archimate.js";
 export {
   egoNetwork,
   downstreamOf,

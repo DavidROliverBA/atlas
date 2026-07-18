@@ -87,7 +87,7 @@ export function toSvg(ws: Workspace, viewId: Ulid): string {
   const maxY = Math.max(200, ...boxes.map((b) => b.y + b.h)) + 40;
 
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${maxX - minX} ${maxY - minY}">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${maxX - minX}" height="${maxY - minY}" viewBox="${minX} ${minY} ${maxX - minX} ${maxY - minY}">` +
     `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker></defs>` +
     `<title>${esc(view.name)}</title>` +
     parts.join("") +

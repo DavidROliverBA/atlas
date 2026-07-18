@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { toMermaidC4, toPlantUmlC4, toSvg, workspaceFromFiles, workspaceToFiles } from "@atlas/core";
+import {
+  importArchimate,
+  importStructurizr,
+  toMermaidC4,
+  toPlantUmlC4,
+  toSvg,
+  workspaceFromFiles,
+  workspaceToFiles,
+} from "@atlas/core";
 import { useAtlas } from "../store";
 
 function download(filename: string, content: string, type: string): void {
@@ -8,6 +16,35 @@ function download(filename: string, content: string, type: string): void {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+/** Tag colour overlay (§3.3): pick a tag, matching elements light up everywhere. */
+function TagOverlaySelect() {
+  const ws = useAtlas((s) => s.ws);
+  useAtlas((s) => s.rev);
+  const highlightTag = useAtlas((s) => s.highlightTag);
+  const tags = [
+    ...new Set([...ws.elements.values()].flatMap((e) => e.tags ?? [])),
+  ].sort();
+  if (!tags.length) return null;
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-slate-500">
+      Colour by tag
+      <select
+        data-testid="tag-overlay"
+        className="rounded-md border border-slate-300 bg-white px-1.5 py-1 text-sm text-slate-700"
+        value={highlightTag ?? ""}
+        onChange={(e) => useAtlas.setState({ highlightTag: e.target.value || null })}
+      >
+        <option value="">off</option>
+        {tags.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 export function Toolbar() {
@@ -32,19 +69,69 @@ export function Toolbar() {
   const importBundle = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".json";
+    input.accept = ".json,.xml";
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
       try {
-        const parsed = JSON.parse(await file.text()) as { files?: Record<string, string> };
-        if (!parsed.files) throw new Error("Not an Atlas bundle (missing files map)");
-        replaceWorkspace(workspaceFromFiles(new Map(Object.entries(parsed.files))));
+        const text = await file.text();
+        if (file.name.endsWith(".xml")) {
+          // ArchiMate Open Exchange (best effort).
+          const { workspace, warnings } = importArchimate(text, { next: () => useAtlas.getState().newId() });
+          replaceWorkspace(workspace);
+          if (warnings.length) {
+            useAtlas.setState({ error: `Imported with ${warnings.length} warning(s): ${warnings[0]}` });
+          }
+          return;
+        }
+        const parsed = JSON.parse(text) as { files?: Record<string, string>; model?: unknown };
+        if (parsed.files) {
+          replaceWorkspace(workspaceFromFiles(new Map(Object.entries(parsed.files))));
+        } else if (parsed.model) {
+          // Structurizr JSON (best effort).
+          const { workspace, warnings } = importStructurizr(parsed as never, {
+            next: () => useAtlas.getState().newId(),
+          });
+          replaceWorkspace(workspace);
+          if (warnings.length) {
+            useAtlas.setState({ error: `Imported with ${warnings.length} warning(s): ${warnings[0]}` });
+          }
+        } else {
+          throw new Error("Unrecognised file — expected an Atlas bundle, Structurizr JSON, or ArchiMate XML");
+        }
       } catch (err) {
         useAtlas.setState({ error: err instanceof Error ? err.message : String(err) });
       }
     };
     input.click();
+  };
+
+  const exportPng = async () => {
+    const svg = toSvg(ws, activeViewId);
+    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Could not rasterise the view"));
+      img.src = url;
+    });
+    const scale = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth * scale;
+    canvas.height = img.naturalHeight * scale;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${viewSlug()}.png`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }, "image/png");
   };
 
   const btn =
@@ -91,6 +178,13 @@ export function Toolbar() {
               Current view as SVG
             </button>
             <button
+              data-testid="export-png"
+              className="px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+              onClick={() => void exportPng()}
+            >
+              Current view as PNG
+            </button>
+            <button
               data-testid="export-mermaid"
               className="px-3 py-1.5 text-left text-sm hover:bg-slate-50"
               onClick={() => download(`${viewSlug()}.mmd`, toMermaidC4(ws, activeViewId), "text/plain")}
@@ -110,6 +204,8 @@ export function Toolbar() {
       <button data-testid="import" className={btn} onClick={importBundle}>
         Import
       </button>
+      <span className="mx-2 h-5 w-px bg-slate-200" />
+      <TagOverlaySelect />
       <span className="flex-1" />
       <span className="truncate text-sm text-slate-500" data-testid="workspace-name">
         {ws.meta.name}

@@ -81,6 +81,8 @@ export interface AtlasStore {
   temporal: TemporalContext;
   /** When set, the canvas renders a state-diff overlay between two contexts. */
   diffPair: { a: TemporalContext; b: TemporalContext } | null;
+  /** Tag-based colour overlay (§3.3): elements carrying this tag are highlighted. */
+  highlightTag: string | null;
   /** Dispatch a command; returns an error message (also stored) or null on success. */
   dispatch(command: Command): string | null;
   undo(): void;
@@ -122,6 +124,7 @@ export const useAtlas = create<AtlasStore>((set, get) => {
     overlay: null,
     temporal: { type: "all" },
     diffPair: null,
+    highlightTag: null,
 
     dispatch(command) {
       try {

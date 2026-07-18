@@ -73,6 +73,7 @@ function CanvasInner() {
 
   const temporal = useAtlas((s) => s.temporal);
   const diffPair = useAtlas((s) => s.diffPair);
+  const highlightTag = useAtlas((s) => s.highlightTag);
 
   const derived = useMemo(() => {
     const view = ws.views.get(activeViewId);
@@ -108,7 +109,9 @@ function CanvasInner() {
           diff && elementDiffStatus(diff, el.id) === "removed"
             ? effectiveElement(el, diffPair!.a)
             : effectiveElement(el, displayCtx);
-        return toNode(shown, p.x, p.y, p.width, p.height, drillable, diff ? elementDiffStatus(diff, el.id) : undefined);
+        const node = toNode(shown, p.x, p.y, p.width, p.height, drillable, diff ? elementDiffStatus(diff, el.id) : undefined);
+        node.data.tagged = highlightTag !== null && (el.tags?.includes(highlightTag) ?? false);
+        return node;
       })
       .filter((n): n is AtlasNode => n !== null);
     const edges: Edge[] = [...ws.relationships.values()]
@@ -143,7 +146,7 @@ function CanvasInner() {
           : {}),
       }));
     return { nodes, edges };
-  }, [ws, rev, activeViewId, selection, temporal, diffPair]);
+  }, [ws, rev, activeViewId, selection, temporal, diffPair, highlightTag]);
 
   useEffect(() => {
     setNodes(

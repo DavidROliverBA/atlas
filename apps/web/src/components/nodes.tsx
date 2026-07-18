@@ -8,6 +8,8 @@ export type AtlasNodeData = {
   drillable: boolean;
   /** Set when a state-diff overlay is active. */
   diffStatus?: "added" | "removed" | "changed";
+  /** Set when the tag colour overlay matches this element. */
+  tagged?: boolean;
 };
 export type AtlasNode = Node<AtlasNodeData, "atlas" | "atlasGroup">;
 
@@ -24,15 +26,22 @@ const DIFF_BADGE: Record<NonNullable<AtlasNodeData["diffStatus"]>, { label: stri
 };
 
 export function AtlasElementNode({ data, selected }: NodeProps<AtlasNode>) {
-  const { element, drillable, diffStatus } = data;
+  const { element, drillable, diffStatus, tagged } = data;
   const stencil = stencilFor(element.kind);
   return (
     <div
       data-testid="canvas-node"
       data-elname={element.name}
       data-diff={diffStatus}
+      data-tagged={tagged ? "true" : undefined}
       className={`atlas-fade-in relative h-full w-full rounded-xl border-2 px-3 py-2 shadow-sm transition-shadow ${stencil.nodeClass} ${
-        selected ? "ring-2 ring-blue-500 ring-offset-2" : diffStatus ? DIFF_RING[diffStatus] : ""
+        selected
+          ? "ring-2 ring-blue-500 ring-offset-2"
+          : diffStatus
+            ? DIFF_RING[diffStatus]
+            : tagged
+              ? "ring-2 ring-fuchsia-500 ring-offset-2"
+              : ""
       }`}
     >
       {diffStatus && (

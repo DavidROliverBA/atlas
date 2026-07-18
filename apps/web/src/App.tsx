@@ -40,13 +40,37 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const meta = e.metaKey || e.ctrlKey;
-      if (!meta || e.key.toLowerCase() !== "z") return;
       const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-      e.preventDefault();
-      if (e.shiftKey) redo();
-      else undo();
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      const meta = e.metaKey || e.ctrlKey;
+      const { ws, selection, activeViewId, dispatch, select } = useAtlas.getState();
+
+      if (meta && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (e.key === "Escape") {
+        select(null);
+        return;
+      }
+      // Delete removes from the *view* (never the model — that's the inspector's
+      // explicit, confirmed action). For relationships it deletes the relationship.
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (!selection) return;
+        e.preventDefault();
+        if (selection.type === "element") {
+          const view = ws.views.get(activeViewId);
+          if (view?.placements.some((p) => p.elementId === selection.id)) {
+            dispatch({ type: "removeFromView", viewId: activeViewId, elementId: selection.id });
+            select(null);
+          }
+        } else {
+          dispatch({ type: "deleteRelationship", id: selection.id });
+          select(null);
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

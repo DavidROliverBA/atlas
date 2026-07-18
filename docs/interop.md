@@ -25,11 +25,27 @@
 
 Dangling relationships or illegal containment become warnings, never a failed import.
 
-### ArchiMate Open Exchange — not yet implemented
+### ArchiMate Open Exchange (best effort) — `importArchimate(xml, ids)`
 
-Planned mapping (documented ahead of implementation, per the brief):
-Business Actor → `person`; Application Component → `system`/`container` by nesting;
-Node/Artifact → `container` with the generic-tech pack; groupings → `group`;
-Serving/Flow/Triggering → relationships with tag `archimate:<type>`. Motivation and
-Implementation layers have no Atlas equivalent and would import as tagged custom
-properties. XML parsing lands with v1.1.
+| ArchiMate | Atlas | Notes |
+|---|---|---|
+| BusinessActor / BusinessRole | `person` | tagged `archimate:<type>` |
+| ApplicationComponent / ApplicationCollaboration / ApplicationService | `system` | |
+| Node / Device / SystemSoftware / Artifact | `system` | pair with the generic-tech pack for symbols |
+| Grouping | `group` | |
+| any relationship between imported elements | relationship | verb = relationship name or lowercased type; tagged `archimate:<type>` |
+| Motivation / Implementation layers, BusinessProcess etc. | **warning, skipped** | no stable Atlas equivalent in v1 |
+| views, composition-as-containment | **not mapped** | one auto landscape is generated; nesting via Composition is a v1.1 refinement |
+
+Both importers are reachable from the toolbar **Import** button (which auto-detects
+Atlas bundles, Structurizr JSON, and ArchiMate XML) and never fail on partial input —
+unmappable content becomes warnings.
+
+## Performance (M9 pass)
+
+- Core: 1,000 elements / 300 relationships build through the command bus, serialise to
+  1,302 files, reload with full schema validation, and re-serialise byte-identically —
+  guarded by thresholds in `packages/core/test/perf.test.ts` (actual runtime: milliseconds).
+- UI: a 1,000-element workspace with 150 elements placed on one view loads, renders,
+  and stays interactive (selection, tag overlay, temporal filter) — guarded by
+  `apps/web/e2e/perf.spec.ts`.
