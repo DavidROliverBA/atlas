@@ -36,6 +36,7 @@ test.describe("persistence and workspace lifecycle", () => {
 
     const downloadPromise = page.waitForEvent("download");
     await page.getByTestId("export").click();
+    await page.getByTestId("export-bundle").click();
     const download = await downloadPromise;
     const path = await download.path();
     expect(download.suggestedFilename()).toContain(".atlas.json");
@@ -52,6 +53,28 @@ test.describe("persistence and workspace lifecycle", () => {
 
     await expect(canvasNode(page, "Loyalty Platform")).toBeVisible();
     await expect(canvasNode(page, "CRM")).toHaveCount(0);
+  });
+
+  test("current view exports as SVG and Mermaid C4", async ({ page }) => {
+    await freshApp(page);
+
+    let downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("export").click();
+    await page.getByTestId("export-svg").click();
+    let download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("landscape.svg");
+    const fs = await import("node:fs");
+    const svg = fs.readFileSync((await download.path())!, "utf8");
+    expect(svg).toContain("<svg");
+    expect(svg).toContain("Booking Engine");
+
+    downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("export").click();
+    await page.getByTestId("export-mermaid").click();
+    download = await downloadPromise;
+    const mermaid = fs.readFileSync((await download.path())!, "utf8");
+    expect(mermaid).toContain("C4Context");
+    expect(mermaid).toContain('"Customer"');
   });
 
   test("a corrupt persisted workspace falls back to the demo instead of crashing", async ({ page }) => {

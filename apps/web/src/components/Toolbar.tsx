@@ -1,25 +1,32 @@
-import { workspaceFromFiles, workspaceToFiles } from "@atlas/core";
+import { useState } from "react";
+import { toMermaidC4, toPlantUmlC4, toSvg, workspaceFromFiles, workspaceToFiles } from "@atlas/core";
 import { useAtlas } from "../store";
+
+function download(filename: string, content: string, type: string): void {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([content], { type }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 export function Toolbar() {
   const ws = useAtlas((s) => s.ws);
   const bus = useAtlas((s) => s.bus);
+  const activeViewId = useAtlas((s) => s.activeViewId);
+  const [exportOpen, setExportOpen] = useState(false);
   useAtlas((s) => s.rev);
   const undo = useAtlas((s) => s.undo);
   const redo = useAtlas((s) => s.redo);
   const resetToDemo = useAtlas((s) => s.resetToDemo);
   const replaceWorkspace = useAtlas((s) => s.replaceWorkspace);
 
+  const slug = () => ws.meta.name.toLowerCase().replace(/\s+/g, "-");
+  const viewSlug = () => ws.views.get(activeViewId)?.name.toLowerCase().replace(/\s+/g, "-") ?? "view";
+
   const exportBundle = () => {
     const files = Object.fromEntries(workspaceToFiles(ws));
-    const blob = new Blob([JSON.stringify({ atlasBundle: 1, files }, null, 2)], {
-      type: "application/json",
-    });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${ws.meta.name.toLowerCase().replace(/\s+/g, "-")}.atlas.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    download(`${slug()}.atlas.json`, JSON.stringify({ atlasBundle: 1, files }, null, 2), "application/json");
   };
 
   const importBundle = () => {
@@ -63,9 +70,43 @@ export function Toolbar() {
         Analysis
       </button>
       <span className="mx-2 h-5 w-px bg-slate-200" />
-      <button data-testid="export" className={btn} onClick={exportBundle}>
-        Export
-      </button>
+      <div className="relative">
+        <button data-testid="export" className={btn} onClick={() => setExportOpen((o) => !o)}>
+          Export ▾
+        </button>
+        {exportOpen && (
+          <div
+            data-testid="export-menu"
+            className="absolute left-0 top-9 z-30 flex w-52 flex-col rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+            onClick={() => setExportOpen(false)}
+          >
+            <button data-testid="export-bundle" className="px-3 py-1.5 text-left text-sm hover:bg-slate-50" onClick={exportBundle}>
+              Workspace bundle (.json)
+            </button>
+            <button
+              data-testid="export-svg"
+              className="px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+              onClick={() => download(`${viewSlug()}.svg`, toSvg(ws, activeViewId), "image/svg+xml")}
+            >
+              Current view as SVG
+            </button>
+            <button
+              data-testid="export-mermaid"
+              className="px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+              onClick={() => download(`${viewSlug()}.mmd`, toMermaidC4(ws, activeViewId), "text/plain")}
+            >
+              Current view as Mermaid C4
+            </button>
+            <button
+              data-testid="export-plantuml"
+              className="px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+              onClick={() => download(`${viewSlug()}.puml`, toPlantUmlC4(ws, activeViewId), "text/plain")}
+            >
+              Current view as PlantUML C4
+            </button>
+          </div>
+        )}
+      </div>
       <button data-testid="import" className={btn} onClick={importBundle}>
         Import
       </button>

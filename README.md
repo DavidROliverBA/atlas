@@ -18,10 +18,10 @@ source-control-friendly serialisation of Structurizr.
 | M6 — Time (scrubber, named states, overrides, diff overlay + report) | ✅ |
 | M7 — AI chat (Anthropic tool use → command bus, Apply/Discard proposals) | ✅ |
 | M8 — Supabase (schema+RLS, row mapping, realtime relay, file↔DB sync) | ✅ adapter + tests; live 2-browser run needs a provisioned Supabase project |
-| M9 — Polish & interop | 🚧 Mermaid/PlantUML export + CLI shipped; PNG/SVG export, Structurizr/ArchiMate import, perf pass remaining |
+| M9 — Polish & interop | 🚧 SVG/Mermaid/PlantUML export (UI menu + CLI) and Structurizr JSON import shipped; ArchiMate import, PNG raster, keyboard-shortcut/theming polish, 1,000-element perf pass remaining ([interop notes](docs/interop.md)) |
 
-**Test suite:** 49 unit tests across `core`/`stencils`/`ai`/`cli`/`storage-supabase`,
-52 Playwright end-to-end journeys against the real UI.
+**Test suite:** 53 unit tests across `core`/`stencils`/`ai`/`cli`/`storage-supabase`,
+53 Playwright end-to-end journeys against the real UI.
 
 ### Deviations from the brief (with rationale)
 
