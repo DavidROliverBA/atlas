@@ -7,6 +7,8 @@ import { Canvas } from "./components/Canvas";
 import { Inspector } from "./components/Inspector";
 import { Breadcrumbs } from "./components/Breadcrumbs";
 import { ModeToggle } from "./components/ModeToggle";
+import { ConnectionsView } from "./components/ConnectionsView";
+import { AnalysisDrawer } from "./components/AnalysisDrawer";
 
 function Toast() {
   const error = useAtlas((s) => s.error);
@@ -31,6 +33,7 @@ function Toast() {
 export default function App() {
   const undo = useAtlas((s) => s.undo);
   const redo = useAtlas((s) => s.redo);
+  const overlay = useAtlas((s) => s.overlay);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -58,11 +61,17 @@ export default function App() {
           <Breadcrumbs />
           <ModeToggle />
           <Canvas />
+          {overlay?.type === "analysis" && (
+            <AnalysisDrawer onClose={() => useAtlas.setState({ overlay: null })} />
+          )}
         </main>
         <aside className="w-80 shrink-0 border-l border-slate-200 bg-white">
           <Inspector />
         </aside>
       </div>
+      {overlay?.type === "connections" && (
+        <ConnectionsView centerId={overlay.id} onClose={() => useAtlas.setState({ overlay: null })} />
+      )}
       <Toast />
     </div>
   );

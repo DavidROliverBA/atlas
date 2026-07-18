@@ -65,6 +65,8 @@ export interface AtlasStore {
   error: string | null;
   /** Direction of the last drill navigation, used for the zoom animation. */
   navDirection: "in" | "out" | null;
+  /** Full-screen/side overlays (connections ego-view, estate analysis). */
+  overlay: { type: "connections"; id: Ulid } | { type: "analysis" } | null;
   /** Dispatch a command; returns an error message (also stored) or null on success. */
   dispatch(command: Command): string | null;
   undo(): void;
@@ -103,6 +105,7 @@ export const useAtlas = create<AtlasStore>((set, get) => {
     selection: null,
     error: null,
     navDirection: null,
+    overlay: null,
 
     dispatch(command) {
       try {

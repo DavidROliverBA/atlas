@@ -222,6 +222,15 @@ function ElementInspector({ element }: { element: Element }) {
       </div>
 
       <div className="mt-2 flex flex-col gap-1.5 border-t border-slate-200 pt-3">
+        {element.kind !== "group" && (
+          <button
+            data-testid="open-connections"
+            onClick={() => useAtlas.setState({ overlay: { type: "connections", id: element.id } })}
+            className="rounded-md border border-blue-300 bg-blue-50 px-2 py-1.5 text-sm text-blue-800 hover:bg-blue-100"
+          >
+            Connections view — all relationships
+          </button>
+        )}
         {onActiveView && (
           <button
             data-testid="remove-from-view"

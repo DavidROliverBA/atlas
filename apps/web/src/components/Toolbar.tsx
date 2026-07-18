@@ -55,6 +55,14 @@ export function Toolbar() {
         ↪ Redo
       </button>
       <span className="mx-2 h-5 w-px bg-slate-200" />
+      <button
+        data-testid="open-analysis"
+        className={btn}
+        onClick={() => useAtlas.setState({ overlay: { type: "analysis" } })}
+      >
+        Analysis
+      </button>
+      <span className="mx-2 h-5 w-px bg-slate-200" />
       <button data-testid="export" className={btn} onClick={exportBundle}>
         Export
       </button>
