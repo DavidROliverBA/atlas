@@ -1,0 +1,21 @@
+{
+  "name": "@atlas/storage-supabase",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Postgres/Supabase storage adapter for Atlas: normalised schema, RLS, realtime command broadcast, file↔DB sync.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@atlas/core": "workspace:*",
+    "@supabase/supabase-js": "^2.45.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
