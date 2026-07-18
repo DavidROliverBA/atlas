@@ -35,22 +35,39 @@ jobs:
           retention-days: 7
 
   deploy:
-    # Requires repo secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+    # Deploys only when the CLOUDFLARE_API_TOKEN repo secret is configured;
+    # otherwise the job succeeds with a notice so CI stays green.
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: test
     runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
+      - name: Check deploy credentials
+        id: creds
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUDFLARE_API_TOKEN secret not set — skipping deploy (add it in repo settings to enable auto-deploy)"
+          fi
       - uses: actions/checkout@v4
+        if: steps.creds.outputs.present == 'true'
       - uses: pnpm/action-setup@v4
+        if: steps.creds.outputs.present == 'true'
       - uses: actions/setup-node@v4
+        if: steps.creds.outputs.present == 'true'
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+        if: steps.creds.outputs.present == 'true'
       - name: Build
+        if: steps.creds.outputs.present == 'true'
         run: pnpm --filter @atlas/web build
       - name: Deploy to Cloudflare Pages
+        if: steps.creds.outputs.present == 'true'
         run: pnpm --filter @atlas/web exec wrangler pages deploy dist --project-name atlas-modelling --branch main
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: edc54adeeb89138ef55778faa9306d2e
