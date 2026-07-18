@@ -13,7 +13,15 @@ import {
   type Node,
 } from "@xyflow/react";
 import { motion } from "framer-motion";
-import type { Element, Ulid } from "@atlas/core";
+import {
+  diffContexts,
+  effectiveElement,
+  visibleElements,
+  visibleRelationships,
+  type Element,
+  type StateDiff,
+  type Ulid,
+} from "@atlas/core";
 import { DEFAULT_H, DEFAULT_W, GRID, useAtlas } from "../store";
 import { nodeTypes, type AtlasNode } from "./nodes";
 import { IsoCanvas } from "./IsoCanvas";
@@ -21,7 +29,15 @@ import { IsoCanvas } from "./IsoCanvas";
 const GROUP_W = 18;
 const GROUP_H = 12;
 
-function toNode(element: Element, x: number, y: number, w: number | undefined, h: number | undefined, drillable: boolean): AtlasNode {
+function toNode(
+  element: Element,
+  x: number,
+  y: number,
+  w: number | undefined,
+  h: number | undefined,
+  drillable: boolean,
+  diffStatus?: "added" | "removed" | "changed",
+): AtlasNode {
   const isGroup = element.kind === "group";
   return {
     id: element.id,
@@ -30,8 +46,15 @@ function toNode(element: Element, x: number, y: number, w: number | undefined, h
     width: (w ?? (isGroup ? GROUP_W : DEFAULT_W)) * GRID,
     height: (h ?? (isGroup ? GROUP_H : DEFAULT_H)) * GRID,
     zIndex: isGroup ? -1 : 0,
-    data: { element, drillable },
+    data: { element, drillable, diffStatus },
   };
+}
+
+function elementDiffStatus(diff: StateDiff, id: Ulid): "added" | "removed" | "changed" | undefined {
+  if (diff.addedElements.includes(id)) return "added";
+  if (diff.removedElements.includes(id)) return "removed";
+  if (diff.changedElements.some((c) => c.id === id)) return "changed";
+  return undefined;
 }
 
 function CanvasInner() {
@@ -48,17 +71,44 @@ function CanvasInner() {
 
   const [nodes, setNodes] = useState<Node[]>([]);
 
+  const temporal = useAtlas((s) => s.temporal);
+  const diffPair = useAtlas((s) => s.diffPair);
+
   const derived = useMemo(() => {
     const view = ws.views.get(activeViewId);
     if (!view) return { nodes: [] as AtlasNode[], edges: [] as Edge[] };
+
+    // Temporal lens: plain context filtering, or a two-context diff overlay.
+    const diff = diffPair ? diffContexts(ws, diffPair.a, diffPair.b) : null;
+    const visA = diffPair ? visibleElements(ws, diffPair.a) : null;
+    const visB = diffPair ? visibleElements(ws, diffPair.b) : null;
+    const vis = !diffPair && temporal.type !== "all" ? visibleElements(ws, temporal) : null;
+    const visRels = vis ? visibleRelationships(ws, temporal, vis) : null;
+    const relsA = diffPair && visA ? visibleRelationships(ws, diffPair.a, visA) : null;
+    const relsB = diffPair && visB ? visibleRelationships(ws, diffPair.b, visB) : null;
+
+    const elementVisible = (id: Ulid) =>
+      diffPair ? (visA?.has(id) ?? false) || (visB?.has(id) ?? false) : vis ? vis.has(id) : true;
+    const relationshipVisible = (id: Ulid) =>
+      diffPair
+        ? (relsA?.has(id) ?? false) || (relsB?.has(id) ?? false)
+        : visRels
+          ? visRels.has(id)
+          : true;
+    const displayCtx = diffPair ? diffPair.b : temporal;
+
     const placed = new Set(view.placements.map((p) => p.elementId));
     const nodes = view.placements
       .map((p) => {
         const el = ws.elements.get(p.elementId);
-        if (!el) return null;
+        if (!el || !elementVisible(el.id)) return null;
         const drillable =
           (el.kind === "system" || el.kind === "container") && ws.children(el.id).length > 0;
-        return toNode(el, p.x, p.y, p.width, p.height, drillable);
+        const shown =
+          diff && elementDiffStatus(diff, el.id) === "removed"
+            ? effectiveElement(el, diffPair!.a)
+            : effectiveElement(el, displayCtx);
+        return toNode(shown, p.x, p.y, p.width, p.height, drillable, diff ? elementDiffStatus(diff, el.id) : undefined);
       })
       .filter((n): n is AtlasNode => n !== null);
     const edges: Edge[] = [...ws.relationships.values()]
@@ -66,9 +116,21 @@ function CanvasInner() {
         (r) =>
           placed.has(r.sourceId) &&
           placed.has(r.targetId) &&
+          relationshipVisible(r.id) &&
+          elementVisible(r.sourceId) &&
+          elementVisible(r.targetId) &&
           !view.hiddenRelationshipIds?.includes(r.id),
       )
       .map((r) => ({
+        ...(diff
+          ? {
+              style: diff.addedRelationships.includes(r.id)
+                ? { stroke: "#10b981", strokeWidth: 2 }
+                : diff.removedRelationships.includes(r.id)
+                  ? { stroke: "#ef4444", strokeDasharray: "6 4", strokeWidth: 2 }
+                  : undefined,
+            }
+          : {}),
         id: r.id,
         source: r.sourceId,
         target: r.targetId,
@@ -81,7 +143,7 @@ function CanvasInner() {
           : {}),
       }));
     return { nodes, edges };
-  }, [ws, rev, activeViewId, selection]);
+  }, [ws, rev, activeViewId, selection, temporal, diffPair]);
 
   useEffect(() => {
     setNodes(

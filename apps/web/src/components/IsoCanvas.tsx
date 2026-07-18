@@ -6,7 +6,14 @@
  */
 
 import { useMemo } from "react";
-import type { Element, Placement, Relationship } from "@atlas/core";
+import {
+  effectiveElement,
+  visibleElements,
+  visibleRelationships,
+  type Element,
+  type Placement,
+  type Relationship,
+} from "@atlas/core";
 import { motion } from "framer-motion";
 import { DEFAULT_H, DEFAULT_W, useAtlas } from "../store";
 
@@ -110,13 +117,19 @@ export function IsoCanvas() {
   const selection = useAtlas((s) => s.selection);
   const select = useAtlas((s) => s.select);
 
+  const temporal = useAtlas((s) => s.temporal);
+
   const scene = useMemo(() => {
     const view = ws.views.get(activeViewId);
     if (!view) return null;
+    const vis = temporal.type !== "all" ? visibleElements(ws, temporal) : null;
+    const visRels = vis ? visibleRelationships(ws, temporal, vis) : null;
     const nodes: IsoNodeDatum[] = [];
     for (const p of view.placements) {
-      const element = ws.elements.get(p.elementId);
-      if (!element) continue;
+      const raw = ws.elements.get(p.elementId);
+      if (!raw) continue;
+      if (vis && !vis.has(raw.id)) continue;
+      const element = effectiveElement(raw, temporal);
       const w = p.width ?? (element.kind === "group" ? 18 : DEFAULT_W);
       const h = p.height ?? (element.kind === "group" ? 12 : DEFAULT_H);
       const centre = iso(p.x + w / 2, p.y + h / 2);
@@ -127,6 +140,7 @@ export function IsoCanvas() {
     const placed = new Map(nodes.map((n) => [n.element.id, n]));
     const edges: Array<{ rel: Relationship; from: IsoNodeDatum; to: IsoNodeDatum }> = [];
     for (const rel of ws.relationships.values()) {
+      if (visRels && !visRels.has(rel.id)) continue;
       const from = placed.get(rel.sourceId);
       const to = placed.get(rel.targetId);
       if (from && to && !view.hiddenRelationshipIds?.includes(rel.id)) {
@@ -141,7 +155,7 @@ export function IsoCanvas() {
     const maxX = Math.max(300, ...xs);
     const maxY = Math.max(300, ...ys);
     return { nodes, edges, viewBox: `${minX} ${minY} ${maxX - minX} ${maxY - minY}` };
-  }, [ws, rev, activeViewId]);
+  }, [ws, rev, activeViewId, temporal]);
 
   if (!scene) return null;
 

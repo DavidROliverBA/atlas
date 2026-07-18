@@ -4,10 +4,10 @@ import { canvasNode, connectNodes, freshApp, rfNode, settle } from "./helpers";
 test.describe("canvas interactions", () => {
   test("connecting two nodes creates a model relationship, editable in the inspector", async ({ page }) => {
     await freshApp(page);
-    await expect(page.locator(".react-flow__edge")).toHaveCount(3);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(4);
 
     await connectNodes(page, "Payments", "CRM");
-    await expect(page.locator(".react-flow__edge")).toHaveCount(4);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(5);
 
     // The new relationship is selected — name it.
     await expect(page.getByTestId("inspector-relationship")).toBeVisible();
@@ -26,7 +26,7 @@ test.describe("canvas interactions", () => {
       .click();
     await expect(page.getByTestId("inspector-relationship")).toBeVisible();
     await page.getByTestId("delete-relationship").click();
-    await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(3);
   });
 
   test("dragging a node persists its new grid position across reloads", async ({ page }) => {
@@ -88,10 +88,10 @@ test.describe("canvas interactions", () => {
     await canvasNode(page, "Payments").click();
     await page.getByTestId("delete-from-model").click();
     await expect(canvasNode(page, "Payments")).toHaveCount(0);
-    await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(3);
 
     await page.getByTestId("undo").click();
     await expect(canvasNode(page, "Payments")).toBeVisible();
-    await expect(page.locator(".react-flow__edge")).toHaveCount(3);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(4);
   });
 });

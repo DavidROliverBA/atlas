@@ -15,7 +15,7 @@ test.describe("isometric mode", () => {
       await expect(isoNode(page, name)).toBeVisible();
     }
     // All model relationships between placed elements are drawn.
-    await expect(page.getByTestId("iso-edge")).toHaveCount(3);
+    await expect(page.getByTestId("iso-edge")).toHaveCount(4);
 
     // Same scene graph: relative left-to-right order is preserved under projection
     // (Customer is left of Booking Engine in grid coordinates).

@@ -69,7 +69,7 @@ test.describe("automated views and analysis (M5)", () => {
     const matrix = page.getByTestId("dependency-matrix");
     await expect(matrix).toBeVisible();
     // Booking Engine row has outgoing deps to Payments and CRM (two non-empty cells).
-    await expect(matrix.locator("td.bg-blue-100")).toHaveCount(3); // customer→booking, booking→payments, booking→crm
+    await expect(matrix.locator("td.bg-blue-100")).toHaveCount(4); // customer→booking, booking→payments, booking→crm, booking→mainframe
   });
 
   test("impact traversal lists everything downstream", async ({ page }) => {

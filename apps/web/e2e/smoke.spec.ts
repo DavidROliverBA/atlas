@@ -32,7 +32,7 @@ test.describe("app shell", () => {
 
   test("edges from the model render on the canvas with labels", async ({ page }) => {
     await freshApp(page);
-    await expect(page.locator(".react-flow__edge")).toHaveCount(3);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(4);
     await expect(page.getByText("books trips using")).toBeVisible();
   });
 });

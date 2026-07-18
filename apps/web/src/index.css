@@ -37,3 +37,19 @@ body,
 .react-flow__attribution {
   display: none;
 }
+
+/* Elements entering a view (or a temporal context) fade in subtly. */
+@keyframes atlas-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.atlas-fade-in {
+  animation: atlas-fade-in 260ms ease-out;
+}

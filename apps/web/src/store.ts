@@ -13,6 +13,7 @@ import {
   workspaceFromFiles,
   workspaceToFiles,
   type Command,
+  type TemporalContext,
   type Ulid,
   type View,
   type ViewKind,
@@ -67,6 +68,10 @@ export interface AtlasStore {
   navDirection: "in" | "out" | null;
   /** Full-screen/side overlays (connections ego-view, estate analysis). */
   overlay: { type: "connections"; id: Ulid } | { type: "analysis" } | null;
+  /** Temporal lens applied to every view (§3.6). */
+  temporal: TemporalContext;
+  /** When set, the canvas renders a state-diff overlay between two contexts. */
+  diffPair: { a: TemporalContext; b: TemporalContext } | null;
   /** Dispatch a command; returns an error message (also stored) or null on success. */
   dispatch(command: Command): string | null;
   undo(): void;
@@ -106,6 +111,8 @@ export const useAtlas = create<AtlasStore>((set, get) => {
     error: null,
     navDirection: null,
     overlay: null,
+    temporal: { type: "all" },
+    diffPair: null,
 
     dispatch(command) {
       try {

@@ -62,6 +62,15 @@ export function buildSeedWorkspace(ids: UlidFactory): Workspace {
     description: "Customer profiles and loyalty",
     status: "live",
   });
+  const mainframe = el({
+    kind: "system",
+    name: "Legacy Mainframe",
+    parentId: null,
+    description: "Inventory of record — being retired",
+    status: "deprecated",
+    tags: ["legacy"],
+    temporal: { validTo: "2027-12-31" },
+  });
 
   const webApp = el({
     kind: "container",
@@ -90,6 +99,13 @@ export function buildSeedWorkspace(ids: UlidFactory): Workspace {
   rel({ sourceId: booking.id, targetId: crm.id, name: "updates loyalty in", technology: ["Kafka"] });
   rel({ sourceId: webApp.id, targetId: api.id, name: "calls", technology: ["JSON/HTTPS"] });
   rel({ sourceId: api.id, targetId: db.id, name: "reads and writes", technology: ["JDBC"] });
+  rel({
+    sourceId: booking.id,
+    targetId: mainframe.id,
+    name: "syncs inventory with",
+    tags: ["legacy"],
+    temporal: { validTo: "2027-12-31" },
+  });
 
   const landscape: View = {
     id: ids.next(),
@@ -101,6 +117,7 @@ export function buildSeedWorkspace(ids: UlidFactory): Workspace {
       { elementId: booking.id, x: 14, y: 6 },
       { elementId: payments.id, x: 28, y: 0 },
       { elementId: crm.id, x: 28, y: 12 },
+      { elementId: mainframe.id, x: 14, y: 16 },
     ],
   };
   bus.dispatch({ type: "createView", view: landscape });
@@ -117,6 +134,17 @@ export function buildSeedWorkspace(ids: UlidFactory): Workspace {
     ],
   };
   bus.dispatch({ type: "createView", view: containers });
+
+  // Named states: today's estate vs the 2028 target (mainframe gone, new web stack).
+  const current = { id: ids.next(), name: "Current", date: "2026-07-18" };
+  const target = { id: ids.next(), name: "Target 2028", date: "2028-01-01" };
+  bus.dispatch({ type: "createState", state: current });
+  bus.dispatch({ type: "createState", state: target });
+  bus.dispatch({
+    type: "updateElement",
+    id: webApp.id,
+    changes: { stateOverrides: { [target.id]: { technology: ["TypeScript", "Next.js"] } } },
+  });
 
   return ws;
 }

@@ -9,6 +9,7 @@ import { Breadcrumbs } from "./components/Breadcrumbs";
 import { ModeToggle } from "./components/ModeToggle";
 import { ConnectionsView } from "./components/ConnectionsView";
 import { AnalysisDrawer } from "./components/AnalysisDrawer";
+import { TimelineBar } from "./components/TimelineBar";
 
 function Toast() {
   const error = useAtlas((s) => s.error);
@@ -69,6 +70,7 @@ export default function App() {
           <Inspector />
         </aside>
       </div>
+      <TimelineBar />
       {overlay?.type === "connections" && (
         <ConnectionsView centerId={overlay.id} onClose={() => useAtlas.setState({ overlay: null })} />
       )}
