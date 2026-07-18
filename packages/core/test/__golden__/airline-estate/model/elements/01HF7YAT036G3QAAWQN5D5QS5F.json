@@ -1,0 +1,13 @@
+{
+  "id": "01HF7YAT036G3QAAWQN5D5QS5F",
+  "kind": "system",
+  "name": "Legacy Mainframe",
+  "parentId": null,
+  "status": "deprecated",
+  "tags": [
+    "legacy"
+  ],
+  "temporal": {
+    "validTo": "2027-12-31"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "01HF7YAT07NCV0CXCYXVM9D8J8",
+  "name": "takes payment via",
+  "sourceId": "01HF7YAT0140SMRJHJE2RGJ84A",
+  "targetId": "01HF7YAT02XBMMJ6SBAWEJ532W",
+  "technology": [
+    "HTTPS",
+    "REST"
+  ]
+}

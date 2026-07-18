@@ -1,0 +1,28 @@
+{
+  "id": "01HF7YAT09D18HNFF1DR80WXQR",
+  "kind": "landscape",
+  "name": "Estate landscape",
+  "scopeId": null,
+  "placements": [
+    {
+      "elementId": "01HF7YAT000N3VWAVJQ7PSP8E8",
+      "x": 0,
+      "y": 2
+    },
+    {
+      "elementId": "01HF7YAT0140SMRJHJE2RGJ84A",
+      "x": 4,
+      "y": 2
+    },
+    {
+      "elementId": "01HF7YAT02XBMMJ6SBAWEJ532W",
+      "x": 8,
+      "y": 0
+    },
+    {
+      "elementId": "01HF7YAT036G3QAAWQN5D5QS5F",
+      "x": 8,
+      "y": 4
+    }
+  ]
+}

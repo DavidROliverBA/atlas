@@ -1,0 +1,18 @@
+{
+  "id": "01HF7YAT042W60TXFQG2E6986X",
+  "kind": "container",
+  "name": "Web App",
+  "parentId": "01HF7YAT0140SMRJHJE2RGJ84A",
+  "stateOverrides": {
+    "01HF7YAT0C5P87Z6QC3ZH12XYB": {
+      "technology": [
+        "TypeScript",
+        "Next.js"
+      ]
+    }
+  },
+  "technology": [
+    "TypeScript",
+    "React"
+  ]
+}

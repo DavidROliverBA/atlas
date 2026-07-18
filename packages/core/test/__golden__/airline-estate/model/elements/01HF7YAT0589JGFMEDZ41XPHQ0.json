@@ -1,0 +1,9 @@
+{
+  "id": "01HF7YAT0589JGFMEDZ41XPHQ0",
+  "kind": "container",
+  "name": "Booking DB",
+  "parentId": "01HF7YAT0140SMRJHJE2RGJ84A",
+  "technology": [
+    "PostgreSQL"
+  ]
+}

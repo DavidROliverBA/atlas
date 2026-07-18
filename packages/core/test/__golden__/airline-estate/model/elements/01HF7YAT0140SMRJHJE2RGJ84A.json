@@ -1,0 +1,15 @@
+{
+  "id": "01HF7YAT0140SMRJHJE2RGJ84A",
+  "kind": "system",
+  "name": "Booking Engine",
+  "parentId": null,
+  "criticality": "critical",
+  "description": "Reservations and ticketing",
+  "owners": [
+    "Commercial IT"
+  ],
+  "status": "live",
+  "tags": [
+    "core"
+  ]
+}

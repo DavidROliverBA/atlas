@@ -1,0 +1,10 @@
+{
+  "id": "01HF7YAT000N3VWAVJQ7PSP8E8",
+  "kind": "person",
+  "name": "Customer",
+  "parentId": null,
+  "description": "Books and manages trips",
+  "tags": [
+    "external"
+  ]
+}

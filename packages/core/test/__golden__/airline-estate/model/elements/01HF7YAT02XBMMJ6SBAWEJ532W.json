@@ -1,0 +1,11 @@
+{
+  "id": "01HF7YAT02XBMMJ6SBAWEJ532W",
+  "kind": "system",
+  "name": "Payments",
+  "parentId": null,
+  "status": "live",
+  "tags": [
+    "core",
+    "pci"
+  ]
+}

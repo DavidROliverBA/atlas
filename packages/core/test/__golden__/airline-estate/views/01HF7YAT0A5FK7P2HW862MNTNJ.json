@@ -1,0 +1,18 @@
+{
+  "id": "01HF7YAT0A5FK7P2HW862MNTNJ",
+  "kind": "container",
+  "name": "Booking Engine — containers",
+  "scopeId": "01HF7YAT0140SMRJHJE2RGJ84A",
+  "placements": [
+    {
+      "elementId": "01HF7YAT042W60TXFQG2E6986X",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "elementId": "01HF7YAT0589JGFMEDZ41XPHQ0",
+      "x": 4,
+      "y": 0
+    }
+  ]
+}
