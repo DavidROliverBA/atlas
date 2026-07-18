@@ -10,6 +10,8 @@ import {
 } from "@atlas/core";
 import { useAtlas } from "../store";
 import { autoLayoutCommands } from "../autolayout";
+import { supabase } from "../supabase";
+import { useSession } from "./AuthGate";
 
 function download(filename: string, content: string, type: string): void {
   const a = document.createElement("a");
@@ -17,6 +19,23 @@ function download(filename: string, content: string, type: string): void {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+/** Shown only when a GitHub SSO session exists (hosted deployment). */
+function SignOutButton() {
+  const session = useSession();
+  if (!session) return null;
+  const login = (session.user.user_metadata?.["user_name"] as string) ?? session.user.email;
+  return (
+    <button
+      data-testid="sign-out"
+      title={`Signed in as ${login}`}
+      onClick={() => void supabase.auth.signOut().then(() => window.location.reload())}
+      className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-700 hover:bg-slate-50"
+    >
+      Sign out{login ? ` (${login})` : ""}
+    </button>
+  );
 }
 
 /** Tag colour overlay (§3.3): pick a tag, matching elements light up everywhere. */
@@ -230,6 +249,7 @@ export function Toolbar() {
       >
         Reset demo
       </button>
+      <SignOutButton />
     </header>
   );
 }

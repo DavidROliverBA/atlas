@@ -9,6 +9,8 @@ import Markdown from "react-markdown";
 import type { Command } from "@atlas/core";
 import { DEFAULT_MODEL, runChatTurn, type ChangeSummaryItem } from "@atlas/ai";
 import { useAtlas } from "../store";
+import { sessionToken } from "../supabase";
+import { useSession } from "./AuthGate";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -37,6 +39,7 @@ export function ChatPanel() {
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const session = useSession();
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -45,9 +48,20 @@ export function ChatPanel() {
   const send = async () => {
     const userMessage = input.trim();
     if (!userMessage || busy) return;
-    if (!apiKey) {
-      setShowSettings(true);
-      return;
+    // Signed-in users go through the token-secured proxy (no personal key
+    // needed); a personal key always takes precedence and calls Anthropic
+    // directly from the browser.
+    let key = apiKey;
+    let baseURL: string | undefined;
+    if (!key) {
+      const token = await sessionToken();
+      if (token) {
+        key = token;
+        baseURL = `${window.location.origin}/api/anthropic`;
+      } else {
+        setShowSettings(true);
+        return;
+      }
     }
     setInput("");
     setProposal(null);
@@ -55,7 +69,8 @@ export function ChatPanel() {
     setBusy(true);
     try {
       const result = await runChatTurn({
-        apiKey,
+        apiKey: key,
+        ...(baseURL ? { baseURL } : {}),
         model,
         history: messages,
         userMessage,
@@ -199,7 +214,9 @@ export function ChatPanel() {
           <textarea
             data-testid="chat-input"
             className="max-h-28 min-h-9 flex-1 resize-y rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none"
-            placeholder={apiKey ? "Describe a change…" : "Set your API key first…"}
+            placeholder={
+              apiKey || session ? "Describe a change…" : "Set your API key first…"
+            }
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
