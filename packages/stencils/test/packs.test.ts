@@ -45,4 +45,12 @@ describe("built-in stencil packs", () => {
     expect(vpc.elementType).toBe("group");
     expect(vpc.attributeSchema).toBeUndefined();
   });
+
+  it("cloud service stencils map to components (inside containers), never containers", () => {
+    for (const pack of BUILTIN_PACKS.filter((p) => ["aws", "azure", "gcp"].includes(p.id))) {
+      for (const s of pack.stencils) {
+        expect(["component", "group"], `${pack.id}/${s.id}`).toContain(s.elementType);
+      }
+    }
+  });
 });

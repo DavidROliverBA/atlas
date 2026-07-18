@@ -35,8 +35,10 @@ test.describe("stencil packs (M4)", () => {
     await page.getByTestId("manage-packs").click();
     await page.getByTestId("pack-toggle-aws").check();
 
-    // Lambda maps to a container, so it lives inside a system: drill first.
+    // Cloud services map to components, so they live inside a container:
+    // drill system → container first.
     await rfNode(page, "Booking Engine").dblclick();
+    await rfNode(page, "Booking API").dblclick();
     await page.getByTestId("palette-search").fill("lambda");
     await page.getByTestId("palette-lambda").click();
 
@@ -58,7 +60,8 @@ test.describe("stencil packs (M4)", () => {
     // Valid account id sticks and survives reselection.
     await page.getByTestId("attr-accountId").fill("123456789012");
     await page.getByTestId("attr-accountId").blur();
-    await canvasNode(page, "Web App").click();
+    // Reselect to prove the values read back from the model.
+    await page.keyboard.press("Escape");
     await canvasNode(page, "New Lambda Function").click();
     await expect(page.getByTestId("attr-accountId")).toHaveValue("123456789012");
     await expect(page.getByTestId("attr-region")).toHaveValue("eu-west-2");
@@ -69,6 +72,7 @@ test.describe("stencil packs (M4)", () => {
     await page.getByTestId("manage-packs").click();
     await page.getByTestId("pack-toggle-aws").check();
     await rfNode(page, "Booking Engine").dblclick();
+    await rfNode(page, "Booking API").dblclick();
 
     await page.getByTestId("palette-search").fill("vpc");
     await page.getByTestId("palette-vpc").click();
@@ -80,6 +84,7 @@ test.describe("stencil packs (M4)", () => {
     await page.getByTestId("manage-packs").click();
     await page.getByTestId("pack-toggle-aws").check();
     await rfNode(page, "Booking Engine").dblclick();
+    await rfNode(page, "Booking API").dblclick();
     await page.getByTestId("palette-search").fill("s3");
     await page.getByTestId("palette-s3").click();
     await page.getByTestId("mode-iso").click();

@@ -31,7 +31,7 @@ my-pack/
       "id": "lambda",
       "name": "Lambda Function",
       "category": "compute",
-      "elementType": "container",
+      "elementType": "component",
       "symbol2d": "symbols/2d/lambda.svg",
       "symbolIso": "symbols/iso/lambda.svg",
       "defaults": { "technology": ["AWS Lambda"] },
