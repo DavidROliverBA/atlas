@@ -15,6 +15,7 @@
     "@atlas/ai": "workspace:^",
     "@atlas/core": "workspace:*",
     "@atlas/stencils": "workspace:^",
+    "@atlas/storage-supabase": "workspace:^",
     "@supabase/supabase-js": "^2.45.0",
     "@xyflow/react": "^12.3.0",
     "elkjs": "^0.12.0",

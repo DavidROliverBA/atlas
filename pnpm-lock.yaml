@@ -23,6 +23,9 @@ importers:
       '@atlas/stencils':
         specifier: workspace:^
         version: link:../../packages/stencils
+      '@atlas/storage-supabase':
+        specifier: workspace:^
+        version: link:../../packages/storage-supabase
       '@supabase/supabase-js':
         specifier: ^2.45.0
         version: 2.110.7

@@ -57,6 +57,9 @@ core perf thresholds, and 60 Playwright end-to-end journeys against the real UI
   row mapping, realtime command relay, file↔DB sync.
 - `apps/web` — `@atlas/web`: React + Vite app (canvas, iso mode, model tree, inspector,
   analysis, timeline, AI chat).
+- **Hosted**: https://atlas-modelling.pages.dev (GitHub SSO) · model REST API at
+  [`/api/v1`](https://atlas-modelling.pages.dev/api/v1/openapi.json) with
+  [Swagger UI](https://atlas-modelling.pages.dev/api/docs) — see [docs/api.md](docs/api.md).
 - `docs/` — [research](docs/research.md), [ADRs](docs/adr/),
   [file format](docs/format/workspace-format.md),
   [stencil format](docs/stencil-format.md).

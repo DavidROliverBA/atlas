@@ -68,6 +68,14 @@ export class SupabaseStorageAdapter {
     await upsert("elements", rows.elements);
     await upsert("relationships", rows.relationships);
     await upsert("views", rows.views);
+    // Placements are replaced wholesale so removals prune correctly.
+    if (rows.views.length) {
+      const { error } = await this.supabase
+        .from("view_placements")
+        .delete()
+        .in("view_id", rows.views.map((v) => v.id));
+      if (error) throw new Error(`Supabase placement prune failed: ${error.message}`);
+    }
     await upsert("view_placements", rows.placements, "view_id,element_id");
     await upsert("states", rows.states);
 
