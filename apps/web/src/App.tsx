@@ -36,6 +36,16 @@ export default function App() {
   const undo = useAtlas((s) => s.undo);
   const redo = useAtlas((s) => s.redo);
   const overlay = useAtlas((s) => s.overlay);
+  const source = useAtlas((s) => s.source);
+
+  // Database mode: poll for remote changes so other clients' edits appear.
+  useEffect(() => {
+    if (source !== "db") return;
+    const interval = setInterval(() => {
+      if (!document.hidden) void useAtlas.getState().syncDb();
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [source]);
   const [rightTab, setRightTab] = useState<"inspector" | "chat">("inspector");
 
   useEffect(() => {

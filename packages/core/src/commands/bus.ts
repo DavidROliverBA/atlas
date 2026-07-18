@@ -102,6 +102,16 @@ export class CommandBus {
     return this.undoStack;
   }
 
+  /** The entry undo() would apply next (top of the undo stack). */
+  get peekUndo(): HistoryEntry | undefined {
+    return this.undoStack[this.undoStack.length - 1];
+  }
+
+  /** The entry redo() would apply next (top of the redo stack). */
+  get peekRedo(): HistoryEntry | undefined {
+    return this.redoStack[this.redoStack.length - 1];
+  }
+
   /** Validate and apply a command; push its inverse onto the undo stack. */
   dispatch(command: Command): void {
     const undo = this.apply(command);

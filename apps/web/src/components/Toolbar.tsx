@@ -77,6 +77,10 @@ export function Toolbar() {
   const redo = useAtlas((s) => s.redo);
   const resetToDemo = useAtlas((s) => s.resetToDemo);
   const replaceWorkspace = useAtlas((s) => s.replaceWorkspace);
+  const source = useAtlas((s) => s.source);
+  const connectDb = useAtlas((s) => s.connectDb);
+  const disconnectDb = useAtlas((s) => s.disconnectDb);
+  const syncDb = useAtlas((s) => s.syncDb);
 
   const slug = () => ws.meta.name.toLowerCase().replace(/\s+/g, "-");
   const viewSlug = () => ws.views.get(activeViewId)?.name.toLowerCase().replace(/\s+/g, "-") ?? "view";
@@ -239,6 +243,23 @@ export function Toolbar() {
       <span className="mx-2 h-5 w-px bg-slate-200" />
       <TagOverlaySelect />
       <span className="flex-1" />
+      <select
+        data-testid="workspace-source"
+        title="Where this workspace lives"
+        className="rounded-md border border-slate-300 bg-white px-1.5 py-1 text-sm text-slate-700"
+        value={source}
+        onChange={(e) =>
+          e.target.value === "db" ? void connectDb() : disconnectDb()
+        }
+      >
+        <option value="local">Local workspace</option>
+        <option value="db">Shared database</option>
+      </select>
+      {source === "db" && (
+        <button data-testid="db-sync" className={btn} title="Pull the latest database state" onClick={() => void syncDb()}>
+          Sync
+        </button>
+      )}
       <span className="truncate text-sm text-slate-500" data-testid="workspace-name">
         {ws.meta.name}
       </span>

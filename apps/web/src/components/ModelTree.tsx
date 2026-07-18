@@ -1,6 +1,7 @@
 import type { Element } from "@atlas/core";
 import { stencilFor } from "../stencils";
 import { useAtlas } from "../store";
+import { freeSpot } from "./Palette";
 
 function TreeNode({ element, depth }: { element: Element; depth: number }) {
   const ws = useAtlas((s) => s.ws);
@@ -41,7 +42,7 @@ function TreeNode({ element, depth }: { element: Element; depth: number }) {
               dispatch({
                 type: "placeOnView",
                 viewId: view.id,
-                placement: { elementId: element.id, x: 2, y: 2 },
+                placement: { elementId: element.id, ...freeSpot(view.placements) },
               });
             }}
             className={`${onAnyView ? "ml-auto" : ""} hidden rounded bg-slate-200 px-1 text-[10px] text-slate-600 group-hover:block`}

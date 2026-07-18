@@ -20,13 +20,19 @@ import {
 } from "@atlas/core";
 import { builtinRegistry } from "@atlas/stencils";
 import { buildSeedWorkspace } from "./seed";
+import { apiToken, fetchDbWorkspace, pushCommand, pushesSettled } from "./dbsync";
 
 /** All built-in packs, with attribute validation wired into the command bus. */
 export const stencilRegistry = builtinRegistry();
 
-/** Pack ids enabled in a workspace manifest ("aws@1" → "aws"). */
+/**
+ * Pack ids enabled in a workspace manifest ("aws@1" → "aws"). A workspace
+ * with no packs recorded (e.g. created via the API) still gets the C4 core
+ * vocabulary so the palette is never empty.
+ */
 export function enabledPackIds(ws: Workspace): string[] {
-  return (ws.meta.stencilPacks ?? []).map((ref) => ref.split("@")[0]!);
+  const ids = (ws.meta.stencilPacks ?? []).map((ref) => ref.split("@")[0]!);
+  return ids.length ? ids : ["c4-core", "generic-tech"];
 }
 
 export const GRID = 20;
@@ -83,6 +89,16 @@ export interface AtlasStore {
   diffPair: { a: TemporalContext; b: TemporalContext } | null;
   /** Tag-based colour overlay (§3.3): elements carrying this tag are highlighted. */
   highlightTag: string | null;
+  /** Where the open workspace lives: this browser, or the shared database via the API. */
+  source: "local" | "db";
+  /** Token used for database mode (cached at connect time). */
+  dbToken: string | null;
+  /** Switch to the shared database workspace (loads it via the API). */
+  connectDb(): Promise<void>;
+  /** Return to the browser-local workspace. */
+  disconnectDb(): void;
+  /** Pull the latest database state (no-op in local mode). */
+  syncDb(): Promise<void>;
   /** Dispatch a command; returns an error message (also stored) or null on success. */
   dispatch(command: Command): string | null;
   undo(): void;
@@ -108,9 +124,20 @@ export const useAtlas = create<AtlasStore>((set, get) => {
   const { ws, bus } = makePair();
 
   const bump = () => {
-    const { ws } = get();
-    persist(ws);
+    const { ws, source } = get();
+    // Database mode never touches the local backup workspace.
+    if (source === "local") persist(ws);
     set((s) => ({ rev: s.rev + 1 }));
+  };
+
+  const pushIfDb = (command: Command) => {
+    const { source, dbToken } = get();
+    if (source === "db" && dbToken) {
+      pushCommand(dbToken, command, (message) => {
+        set({ error: message });
+        void get().syncDb();
+      });
+    }
   };
 
   return {
@@ -125,11 +152,93 @@ export const useAtlas = create<AtlasStore>((set, get) => {
     temporal: { type: "all" },
     diffPair: null,
     highlightTag: null,
+    source: "local",
+    dbToken: null,
+
+    async connectDb() {
+      const token = await apiToken();
+      if (!token) {
+        set({ error: "Sign in with GitHub (or set an API token) to open the shared database" });
+        return;
+      }
+      try {
+        const data = await fetchDbWorkspace(token);
+        const ws = Workspace.fromData(data);
+        const bus = new CommandBus(ws, { stencils: stencilRegistry });
+        set({
+          source: "db",
+          dbToken: token,
+          ws,
+          bus,
+          activeViewId: ws.views.size ? firstViewId(ws) : get().activeViewId,
+          selection: null,
+          rev: get().rev + 1,
+        });
+        // A database workspace may legitimately have no views yet.
+        if (!ws.views.size) {
+          const view: View = {
+            id: ids.next(),
+            kind: "landscape",
+            name: "Landscape",
+            scopeId: null,
+            placements: [],
+          };
+          get().dispatch({ type: "createView", view });
+          set({ activeViewId: view.id });
+        }
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+
+    disconnectDb() {
+      const { ws, bus } = makePair();
+      set({
+        source: "local",
+        dbToken: null,
+        ws,
+        bus,
+        activeViewId: firstViewId(ws),
+        selection: null,
+        rev: get().rev + 1,
+      });
+    },
+
+    async syncDb() {
+      const { source, dbToken, ws, activeViewId, selection } = get();
+      if (source !== "db" || !dbToken) return;
+      try {
+        await pushesSettled();
+        const data = await fetchDbWorkspace(dbToken);
+        if (JSON.stringify(data) === JSON.stringify(ws.toData())) return;
+        const next = Workspace.fromData(data);
+        const bus = new CommandBus(next, { stencils: stencilRegistry });
+        set({
+          ws: next,
+          bus,
+          activeViewId: next.views.has(activeViewId)
+            ? activeViewId
+            : next.views.size
+              ? firstViewId(next)
+              : activeViewId,
+          selection:
+            selection?.type === "element" && next.elements.has(selection.id)
+              ? selection
+              : selection?.type === "relationship" && next.relationships.has(selection.id)
+                ? selection
+                : null,
+          rev: get().rev + 1,
+        });
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
 
     dispatch(command) {
       try {
         get().bus.dispatch(command);
         bump();
+        pushIfDb(command);
         return null;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -139,11 +248,19 @@ export const useAtlas = create<AtlasStore>((set, get) => {
     },
 
     undo() {
-      if (get().bus.undo()) bump();
+      const entry = get().bus.peekUndo;
+      if (get().bus.undo()) {
+        bump();
+        if (entry) pushIfDb(entry.undo);
+      }
       ensureActiveView(set, get);
     },
     redo() {
-      if (get().bus.redo()) bump();
+      const entry = get().bus.peekRedo;
+      if (get().bus.redo()) {
+        bump();
+        if (entry) pushIfDb(entry.do);
+      }
       ensureActiveView(set, get);
     },
 

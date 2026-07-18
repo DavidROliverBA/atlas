@@ -10,11 +10,11 @@ import { BUILTIN_PACKS } from "@atlas/stencils";
 import { DEFAULT_H, DEFAULT_W, enabledPackIds, stencilRegistry, useAtlas } from "../store";
 
 /** Find a free spot on the view, scanning left-to-right, top-to-bottom. */
-function freeSpot(occupied: Array<{ x: number; y: number }>): { x: number; y: number } {
-  const taken = new Set(occupied.map((p) => `${Math.round(p.x / 4)},${Math.round(p.y / 4)}`));
+export function freeSpot(occupied: Array<{ x: number; y: number }>): { x: number; y: number } {
+  const near = (a: number, b: number) => Math.abs(a - b) < DEFAULT_W + 2;
   for (let y = 0; y < 400; y += DEFAULT_H + 3) {
     for (let x = 0; x < 400; x += DEFAULT_W + 3) {
-      if (!taken.has(`${Math.round(x / 4)},${Math.round(y / 4)}`)) return { x, y };
+      if (!occupied.some((p) => near(p.x, x) && Math.abs(p.y - y) < DEFAULT_H + 2)) return { x, y };
     }
   }
   return { x: 0, y: 0 };
