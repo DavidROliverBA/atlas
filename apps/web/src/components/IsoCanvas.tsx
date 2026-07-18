@@ -97,15 +97,25 @@ function IsoBox({ datum, selected, onSelect }: { datum: IsoNodeDatum; selected: 
           />
         </>
       )}
-      <text
-        x={datum.cx}
-        y={datum.cy - z - 8}
-        textAnchor="middle"
-        className="select-none"
-        style={{ fontSize: 11, fontWeight: 600, fill: "#0f172a" }}
+      {/*
+        The label lies on the top face: the matrix maps the text's x-axis
+        along the iso grid's +x direction and its y-axis along +y, so the
+        baseline slants at the same angle as the box edges instead of
+        floating horizontally above the tile.
+      */}
+      <g
+        transform={`translate(${datum.cx}, ${datum.cy - z}) matrix(${COS30}, ${SIN30}, ${-COS30}, ${SIN30}, 0, 0)`}
       >
-        {element.name}
-      </text>
+        <text
+          data-testid="iso-label"
+          textAnchor="middle"
+          dominantBaseline="central"
+          className="select-none"
+          style={{ fontSize: 10.5, fontWeight: 600, fill: "#0f172a" }}
+        >
+          {element.name}
+        </text>
+      </g>
     </g>
   );
 }

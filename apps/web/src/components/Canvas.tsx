@@ -7,6 +7,7 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
+  ViewportPortal,
   applyNodeChanges,
   useReactFlow,
   type Connection,
@@ -15,6 +16,7 @@ import {
   type Node,
 } from "@xyflow/react";
 import { autoRoute, pinnedPortsAligned, type Box } from "../ports";
+import { computeGuides, type GuideSegment } from "../guides";
 import { motion } from "framer-motion";
 import {
   diffContexts,
@@ -73,6 +75,7 @@ function CanvasInner() {
   const { fitView } = useReactFlow();
 
   const [nodes, setNodes] = useState<Node[]>([]);
+  const [guides, setGuides] = useState<GuideSegment[]>([]);
 
   const temporal = useAtlas((s) => s.temporal);
   const diffPair = useAtlas((s) => s.diffPair);
@@ -199,8 +202,30 @@ function CanvasInner() {
     [],
   );
 
+  const onNodeDrag = useCallback(
+    (_e: unknown, node: Node) => {
+      const moving: Box = {
+        x: node.position.x,
+        y: node.position.y,
+        w: node.width ?? node.measured?.width ?? DEFAULT_W * GRID,
+        h: node.height ?? node.measured?.height ?? DEFAULT_H * GRID,
+      };
+      const others = nodes
+        .filter((n) => n.id !== node.id)
+        .map((n) => ({
+          x: n.position.x,
+          y: n.position.y,
+          w: n.width ?? n.measured?.width ?? DEFAULT_W * GRID,
+          h: n.height ?? n.measured?.height ?? DEFAULT_H * GRID,
+        }));
+      setGuides(computeGuides(moving, others));
+    },
+    [nodes],
+  );
+
   const onNodeDragStop = useCallback(
     (_e: unknown, node: Node) => {
+      setGuides([]);
       dispatch({
         type: "updatePlacement",
         viewId: activeViewId,
@@ -265,6 +290,7 @@ function CanvasInner() {
         edges={derived.edges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
+        onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
         onNodeClick={(_e, node) => select({ type: "element", id: node.id })}
@@ -281,6 +307,30 @@ function CanvasInner() {
         <Background gap={GRID} color="#e2e8f0" />
         <Controls showInteractive={false} />
         <MiniMap pannable zoomable className="!h-28 !w-44" nodeStrokeWidth={3} />
+        {guides.length > 0 && (
+          <ViewportPortal>
+            <svg
+              className="pointer-events-none absolute left-0 top-0"
+              style={{ overflow: "visible" }}
+              width="1"
+              height="1"
+            >
+              {guides.map((g, i) => (
+                <line
+                  key={i}
+                  data-testid="alignment-guide"
+                  x1={g.axis === "v" ? g.pos : g.from}
+                  y1={g.axis === "v" ? g.from : g.pos}
+                  x2={g.axis === "v" ? g.pos : g.to}
+                  y2={g.axis === "v" ? g.to : g.pos}
+                  stroke="#ec4899"
+                  strokeWidth={1.5}
+                  strokeDasharray="5 4"
+                />
+              ))}
+            </svg>
+          </ViewportPortal>
+        )}
       </ReactFlow>
     </div>
   );

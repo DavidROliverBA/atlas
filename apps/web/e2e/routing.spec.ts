@@ -119,4 +119,41 @@ test.describe("connection ports, routing and colours", () => {
     await freshApp(page);
     await expect(page.locator(".react-flow__minimap")).toBeVisible();
   });
+
+  test("alignment guides appear while dragging a box into line and vanish on drop", async ({ page }) => {
+    await freshApp(page);
+    await settle(page);
+
+    // Payments and CRM share a column in the seed (both x=28). Dragging
+    // Payments vertically keeps them aligned, so vertical guides must show.
+    const box = await rfNode(page, "Payments").boundingBox();
+    if (!box) throw new Error("node not visible");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 60, { steps: 6 });
+
+    // A 1px-wide vertical line has an empty bounding box, so assert presence
+    // and correctness (x1 === x2 means a true vertical guide) rather than
+    // Playwright visibility.
+    const guide = page.getByTestId("alignment-guide").first();
+    await expect(guide).toBeAttached();
+    const [x1, x2] = await guide.evaluate((el) => [el.getAttribute("x1"), el.getAttribute("x2")]);
+    expect(x1).toBe(x2);
+
+    await page.mouse.up();
+    await expect(page.getByTestId("alignment-guide")).toHaveCount(0);
+  });
+
+  test("isometric labels lie on the top face, angled with the boxes", async ({ page }) => {
+    await freshApp(page);
+    await page.getByTestId("mode-iso").click();
+
+    const label = page
+      .locator('[data-testid="iso-node"][data-elname="Booking Engine"]')
+      .getByTestId("iso-label");
+    await expect(label).toHaveText("Booking Engine");
+    // The label's parent group carries the top-face plane transform.
+    const transform = await label.evaluate((el) => el.parentElement?.getAttribute("transform"));
+    expect(transform).toContain("matrix(");
+  });
 });
