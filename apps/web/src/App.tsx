@@ -6,6 +6,7 @@ import { ModelTree } from "./components/ModelTree";
 import { Canvas } from "./components/Canvas";
 import { Inspector } from "./components/Inspector";
 import { Breadcrumbs } from "./components/Breadcrumbs";
+import { ModeToggle } from "./components/ModeToggle";
 
 function Toast() {
   const error = useAtlas((s) => s.error);
@@ -55,6 +56,7 @@ export default function App() {
         </aside>
         <main className="relative min-w-0 flex-1">
           <Breadcrumbs />
+          <ModeToggle />
           <Canvas />
         </main>
         <aside className="w-80 shrink-0 border-l border-slate-200 bg-white">

@@ -16,6 +16,7 @@ import { motion } from "framer-motion";
 import type { Element, Ulid } from "@atlas/core";
 import { DEFAULT_H, DEFAULT_W, GRID, useAtlas } from "../store";
 import { nodeTypes, type AtlasNode } from "./nodes";
+import { IsoCanvas } from "./IsoCanvas";
 
 const GROUP_W = 18;
 const GROUP_H = 12;
@@ -168,8 +169,13 @@ function CanvasInner() {
 }
 
 export function Canvas() {
+  const ws = useAtlas((s) => s.ws);
+  useAtlas((s) => s.rev);
   const activeViewId = useAtlas((s) => s.activeViewId);
   const navDirection = useAtlas((s) => s.navDirection);
+  if (ws.views.get(activeViewId)?.renderMode === "isometric") {
+    return <IsoCanvas />;
+  }
   return (
     <ReactFlowProvider>
       <motion.div
