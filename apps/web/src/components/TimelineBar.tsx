@@ -25,12 +25,81 @@ function ctxLabel(ws: ReturnType<typeof useAtlas.getState>["ws"], ctx: TemporalC
   return ws.states.get(ctx.stateId)?.name ?? "state";
 }
 
+/** Create, rename, date and delete named states — the authoring side of the scrubber. */
+function StatesManager({ onClose }: { onClose: () => void }) {
+  const ws = useAtlas((s) => s.ws);
+  useAtlas((s) => s.rev);
+  const dispatch = useAtlas((s) => s.dispatch);
+  const newId = useAtlas((s) => s.newId);
+  const states = [...ws.states.values()].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+
+  return (
+    <div data-testid="states-manager" className="border-t border-slate-100 bg-slate-50 px-4 py-2">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          Named states
+        </span>
+        <button onClick={onClose} className="text-xs text-slate-400 hover:text-slate-600">
+          done
+        </button>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {states.map((s) => (
+          <div key={s.id} className="flex items-center gap-1.5" data-testid={`state-row-${s.name}`}>
+            <input
+              className="w-44 rounded border border-slate-300 px-1.5 py-0.5 text-xs"
+              defaultValue={s.name}
+              onBlur={(e) => {
+                const name = e.target.value.trim();
+                if (name && name !== s.name) dispatch({ type: "updateState", id: s.id, changes: { name } });
+              }}
+            />
+            <input
+              type="date"
+              className="rounded border border-slate-300 px-1.5 py-0.5 text-xs"
+              value={s.date ?? ""}
+              onChange={(e) =>
+                dispatch({ type: "updateState", id: s.id, changes: { date: (e.target.value || null) as never } })
+              }
+            />
+            <button
+              data-testid={`state-delete-${s.name}`}
+              title="Delete state (memberships and overrides are cleaned up; undoable)"
+              onClick={() =>
+                window.confirm(`Delete state "${s.name}"? Membership and overrides referencing it are removed (undoable).`) &&
+                dispatch({ type: "deleteState", id: s.id })
+              }
+              className="rounded px-1 text-xs text-slate-400 hover:bg-red-50 hover:text-red-600"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        <button
+          data-testid="state-add"
+          onClick={() => {
+            const existing = states.filter((s) => s.name.startsWith("New state")).length;
+            dispatch({
+              type: "createState",
+              state: { id: newId(), name: existing ? `New state ${existing + 1}` : "New state" },
+            });
+          }}
+          className="self-start rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
+        >
+          + Add state
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function TimelineBar() {
   const ws = useAtlas((s) => s.ws);
   useAtlas((s) => s.rev);
   const temporal = useAtlas((s) => s.temporal);
   const diffPair = useAtlas((s) => s.diffPair);
   const [showReport, setShowReport] = useState(false);
+  const [managing, setManaging] = useState(false);
 
   const states = [...ws.states.values()].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
 
@@ -79,6 +148,14 @@ export function TimelineBar() {
           onClick={() => useAtlas.setState({ temporal: { type: "all" }, diffPair: null })}
         >
           All time
+        </button>
+        <button
+          data-testid="states-manage"
+          title="Create, rename or delete named states"
+          className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-200"
+          onClick={() => setManaging((m) => !m)}
+        >
+          ⚙ States
         </button>
         {states.map((s) => (
           <button
@@ -146,6 +223,7 @@ export function TimelineBar() {
         )}
       </div>
 
+      {managing && <StatesManager onClose={() => setManaging(false)} />}
       {diffPair && showReport && report !== null && (
         <pre
           data-testid="diff-report"

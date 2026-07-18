@@ -30,6 +30,7 @@ export interface ElementRow {
   tags: string[] | null;
   links: Element["links"] | null;
   properties: Element["properties"] | null;
+  color: string | null;
   stencil: Element["stencil"] | null;
   temporal: Element["temporal"] | null;
   state_overrides: Element["stateOverrides"] | null;
@@ -46,6 +47,7 @@ export interface RelationshipRow {
   technology: string[] | null;
   tags: string[] | null;
   properties: Relationship["properties"] | null;
+  color: string | null;
   temporal: Relationship["temporal"] | null;
 }
 
@@ -58,6 +60,7 @@ export interface ViewRow {
   description: string | null;
   render_mode: View["renderMode"] | null;
   hidden_relationship_ids: string[] | null;
+  edge_anchors: View["edgeAnchors"] | null;
 }
 
 export interface PlacementRow {
@@ -105,6 +108,7 @@ export function elementToRow(e: Element, workspaceId: string): ElementRow {
     tags: orNull(e.tags),
     links: orNull(e.links),
     properties: orNull(e.properties),
+    color: orNull(e.color),
     stencil: orNull(e.stencil),
     temporal: orNull(e.temporal),
     state_overrides: orNull(e.stateOverrides),
@@ -127,6 +131,7 @@ export function rowToElement(row: ElementRow): Element {
     ...(row.tags !== null ? { tags: row.tags } : {}),
     ...(row.links !== null ? { links: row.links } : {}),
     ...(row.properties !== null ? { properties: row.properties } : {}),
+    ...(row.color !== null ? { color: row.color } : {}),
     ...(row.stencil !== null ? { stencil: row.stencil } : {}),
     ...(row.temporal !== null ? { temporal: row.temporal } : {}),
     ...(row.state_overrides !== null ? { stateOverrides: row.state_overrides } : {}),
@@ -145,6 +150,7 @@ export function relationshipToRow(r: Relationship, workspaceId: string): Relatio
     technology: orNull(r.technology),
     tags: orNull(r.tags),
     properties: orNull(r.properties),
+    color: orNull(r.color),
     temporal: orNull(r.temporal),
   };
 }
@@ -160,6 +166,7 @@ export function rowToRelationship(row: RelationshipRow): Relationship {
     ...(row.technology !== null ? { technology: row.technology } : {}),
     ...(row.tags !== null ? { tags: row.tags } : {}),
     ...(row.properties !== null ? { properties: row.properties } : {}),
+    ...(row.color !== null ? { color: row.color } : {}),
     ...(row.temporal !== null ? { temporal: row.temporal } : {}),
   };
 }
@@ -175,6 +182,7 @@ export function viewToRows(v: View, workspaceId: string): { view: ViewRow; place
       description: orNull(v.description),
       render_mode: orNull(v.renderMode),
       hidden_relationship_ids: orNull(v.hiddenRelationshipIds),
+      edge_anchors: orNull(v.edgeAnchors),
     },
     placements: v.placements.map((p) => ({
       view_id: v.id,
@@ -207,6 +215,7 @@ export function rowsToView(row: ViewRow, placements: PlacementRow[]): View {
     ...(row.hidden_relationship_ids !== null
       ? { hiddenRelationshipIds: row.hidden_relationship_ids }
       : {}),
+    ...(row.edge_anchors !== null ? { edgeAnchors: row.edge_anchors } : {}),
   };
 }
 

@@ -17,6 +17,14 @@ export interface RemoteCommandEnvelope {
   command: Command;
 }
 
+/** Thrown when a guarded save loses an optimistic-concurrency race. */
+export class RevisionConflictError extends Error {
+  constructor() {
+    super("Workspace was modified concurrently — reload and retry");
+    this.name = "RevisionConflictError";
+  }
+}
+
 export class SupabaseStorageAdapter {
   private channel: RealtimeChannel | null = null;
   readonly clientId = Math.random().toString(36).slice(2);
@@ -25,6 +33,33 @@ export class SupabaseStorageAdapter {
     private readonly supabase: SupabaseClient,
     private readonly workspaceId: string,
   ) {}
+
+  private async readRevision(): Promise<number> {
+    const { data, error } = await this.supabase
+      .from("workspaces")
+      .select("revision")
+      .eq("id", this.workspaceId)
+      .single();
+    if (error) throw new Error(`Supabase revision read failed: ${error.message}`);
+    return Number((data as { revision?: number }).revision ?? 0);
+  }
+
+  /**
+   * Load the workspace plus its optimistic-concurrency revision. The load
+   * spans several queries, so the revision is read before and after — a
+   * mismatch means a save landed mid-read and the load retries, guaranteeing
+   * a consistent snapshot (saves themselves are a single transaction).
+   */
+  async loadWithRevision(): Promise<{ workspace: Workspace; revision: number }> {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const before = await this.readRevision();
+      const workspace = await this.load();
+      const after = await this.readRevision();
+      if (before === after) return { workspace, revision: after };
+      await new Promise((resolve) => setTimeout(resolve, 30 + Math.random() * 120));
+    }
+    throw new Error("Workspace is changing too rapidly to read a consistent snapshot");
+  }
 
   /** Load the whole workspace from the normalised tables. */
   async load(): Promise<Workspace> {
@@ -52,44 +87,30 @@ export class SupabaseStorageAdapter {
   }
 
   /**
-   * Persist the current state. Upserts every row and deletes rows that no
-   * longer exist (last-write-wins per object).
+   * Persist the current state atomically via the `atlas_save_workspace`
+   * Postgres function: one transaction, serialised on the workspace row.
+   * When `expectedRevision` is given the save aborts with
+   * RevisionConflictError if anyone saved since that revision was read.
    */
-  async saveSnapshot(ws: Workspace): Promise<void> {
+  async saveSnapshot(ws: Workspace, options: { expectedRevision?: number } = {}): Promise<void> {
     const rows = dataToRows(ws.toData(), this.workspaceId);
-
-    const upsert = async (table: string, data: unknown[], onConflict?: string) => {
-      if (!data.length) return;
-      const { error } = await this.supabase.from(table).upsert(data as never, { onConflict });
-      if (error) throw new Error(`Supabase upsert into ${table} failed: ${error.message}`);
-    };
-
-    await upsert("workspaces", [rows.workspace]);
-    await upsert("elements", rows.elements);
-    await upsert("relationships", rows.relationships);
-    await upsert("views", rows.views);
-    // Placements are replaced wholesale so removals prune correctly.
-    if (rows.views.length) {
-      const { error } = await this.supabase
-        .from("view_placements")
-        .delete()
-        .in("view_id", rows.views.map((v) => v.id));
-      if (error) throw new Error(`Supabase placement prune failed: ${error.message}`);
-    }
-    await upsert("view_placements", rows.placements, "view_id,element_id");
-    await upsert("states", rows.states);
-
-    // Remove rows deleted from the model. Placements first (FK), then the rest.
-    const keep = {
-      elements: rows.elements.map((r) => r.id),
-      relationships: rows.relationships.map((r) => r.id),
-      views: rows.views.map((r) => r.id),
-      states: rows.states.map((r) => r.id),
-    };
-    for (const [table, ids] of Object.entries(keep)) {
-      const query = this.supabase.from(table).delete().eq("workspace_id", this.workspaceId);
-      const { error } = ids.length ? await query.not("id", "in", `(${ids.join(",")})`) : await query;
-      if (error) throw new Error(`Supabase prune of ${table} failed: ${error.message}`);
+    const { error } = await this.supabase.rpc("atlas_save_workspace", {
+      p_workspace_id: this.workspaceId,
+      p_expected_revision: options.expectedRevision ?? null,
+      p_payload: {
+        workspace: rows.workspace,
+        elements: rows.elements,
+        relationships: rows.relationships,
+        views: rows.views,
+        placements: rows.placements,
+        states: rows.states,
+      },
+    });
+    if (error) {
+      if (error.message.includes("revision_conflict") || error.code === "40001") {
+        throw new RevisionConflictError();
+      }
+      throw new Error(`Supabase save failed: ${error.message}`);
     }
   }
 

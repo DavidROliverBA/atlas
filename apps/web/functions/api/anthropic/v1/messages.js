@@ -35,7 +35,26 @@ export async function onRequestPost({ request, env }) {
     const who = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${token}` },
     });
-    authorised = who.ok;
+    if (who.ok) {
+      // Optional allow-list: only named GitHub accounts may spend AI budget.
+      const allowed = (env.ATLAS_ALLOWED_GITHUB ?? "")
+        .split(",")
+        .map((u) => u.trim().toLowerCase())
+        .filter(Boolean);
+      if (allowed.length === 0) {
+        authorised = true;
+      } else {
+        const user = await who.json();
+        const username = (user.user_metadata?.user_name ?? "").toLowerCase();
+        if (allowed.includes(username)) authorised = true;
+        else {
+          return json(403, {
+            type: "error",
+            error: { type: "permission_error", message: "This GitHub account is not authorised to use the Atlas AI" },
+          });
+        }
+      }
+    }
   }
   if (!authorised) {
     return json(401, {

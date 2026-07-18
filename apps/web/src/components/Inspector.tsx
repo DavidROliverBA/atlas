@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Markdown from "react-markdown";
-import type { Criticality, Element, Lifecycle, Relationship, Ulid } from "@atlas/core";
+import type { Criticality, Element, Lifecycle, Relationship, Temporal, Ulid } from "@atlas/core";
 import { KIND_LABELS } from "../stencils";
 import { stencilRegistry, useAtlas } from "../store";
 
@@ -201,6 +201,13 @@ function ElementInspector({ element }: { element: Element }) {
         </div>
       </Field>
 
+      <Field label="Time (validity & states)">
+        <TemporalEditor
+          temporal={element.temporal}
+          onSave={(next) => update({ temporal: next })}
+        />
+      </Field>
+
       {element.stencil && <StencilAttributes element={element} />}
 
       <div className="grid grid-cols-2 gap-2">
@@ -349,6 +356,89 @@ function StencilAttributes({ element }: { element: Element }) {
   );
 }
 
+/**
+ * Temporal editing (§3.6): validity dates and named-state membership for any
+ * element or relationship. An empty editor clears the temporal block.
+ */
+function TemporalEditor({
+  temporal,
+  onSave,
+}: {
+  temporal: Temporal | undefined;
+  onSave: (next: Temporal | null) => void;
+}) {
+  const ws = useAtlas((s) => s.ws);
+  useAtlas((s) => s.rev);
+  const states = [...ws.states.values()].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+
+  const save = (patch: Partial<Temporal>) => {
+    const next: Temporal = { ...(temporal ?? {}), ...patch };
+    if (!next.validFrom) delete next.validFrom;
+    if (!next.validTo) delete next.validTo;
+    if (!next.states?.length) delete next.states;
+    onSave(Object.keys(next).length ? next : null);
+  };
+
+  return (
+    <div data-testid="temporal-editor" className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+            Valid from
+          </span>
+          <input
+            data-testid="temporal-from"
+            type="date"
+            className={`${inputClass} text-xs`}
+            value={temporal?.validFrom ?? ""}
+            onChange={(e) => save({ validFrom: e.target.value || undefined })}
+          />
+        </label>
+        <label className="block">
+          <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+            Valid to (retired after)
+          </span>
+          <input
+            data-testid="temporal-to"
+            type="date"
+            className={`${inputClass} text-xs`}
+            value={temporal?.validTo ?? ""}
+            onChange={(e) => save({ validTo: e.target.value || undefined })}
+          />
+        </label>
+      </div>
+      {states.length > 0 && (
+        <div className="mt-2">
+          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+            State membership (explicit membership overrides dates)
+          </span>
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {states.map((s) => {
+              const member = temporal?.states?.includes(s.id) ?? false;
+              return (
+                <label key={s.id} className="flex cursor-pointer items-center gap-1 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    data-testid={`temporal-state-${s.name}`}
+                    checked={member}
+                    onChange={() => {
+                      const current = temporal?.states ?? [];
+                      save({
+                        states: member ? current.filter((id) => id !== s.id) : [...current, s.id],
+                      });
+                    }}
+                  />
+                  {s.name}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LinksEditor({ element }: { element: Element }) {
   const dispatch = useAtlas((s) => s.dispatch);
   const [title, setTitle] = useState("");
@@ -464,6 +554,12 @@ function RelationshipInspector({ relationship }: { relationship: Relationship })
           className={inputClass}
           defaultValue={relationship.tags?.join(", ") ?? ""}
           onBlur={(e) => update({ tags: listFrom(e.target.value) })}
+        />
+      </Field>
+      <Field label="Time (validity & states)">
+        <TemporalEditor
+          temporal={relationship.temporal}
+          onSave={(next) => update({ temporal: next })}
         />
       </Field>
       <Field label="Line colour">

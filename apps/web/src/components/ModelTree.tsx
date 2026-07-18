@@ -63,6 +63,7 @@ export function ModelTree() {
   useAtlas((s) => s.rev);
   const activeViewId = useAtlas((s) => s.activeViewId);
   const setActiveView = useAtlas((s) => s.setActiveView);
+  const dispatchTop = useAtlas((s) => s.dispatch);
 
   const roots = ws.children(null).sort((a, b) => a.name.localeCompare(b.name));
   const views = [...ws.views.values()].sort((a, b) => a.name.localeCompare(b.name));
@@ -75,7 +76,26 @@ export function ModelTree() {
           <TreeNode key={e.id} element={e} depth={0} />
         ))}
       </div>
-      <h2 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Views</h2>
+      <div className="mb-2 mt-4 flex items-center justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Views</h2>
+        <button
+          data-testid="view-new"
+          title="Create a new view"
+          onClick={() => {
+            const name = window.prompt("Name for the new view:", "New view");
+            if (!name?.trim()) return;
+            const id = useAtlas.getState().newId();
+            const error = dispatchTop({
+              type: "createView",
+              view: { id, kind: "custom", name: name.trim(), scopeId: null, placements: [] },
+            });
+            if (!error) setActiveView(id);
+          }}
+          className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-200"
+        >
+          + New
+        </button>
+      </div>
       <div data-testid="view-list">
         {views.map((v) => (
           <div
@@ -85,11 +105,43 @@ export function ModelTree() {
               useAtlas.setState({ navDirection: null });
               setActiveView(v.id);
             }}
-            className={`cursor-pointer truncate rounded px-1.5 py-1 text-sm ${
+            className={`group flex cursor-pointer items-center gap-1 truncate rounded px-1.5 py-1 text-sm ${
               v.id === activeViewId ? "bg-blue-100 text-blue-900" : "hover:bg-slate-100"
             }`}
           >
-            {v.name}
+            <span className="min-w-0 flex-1 truncate">{v.name}</span>
+            <button
+              data-testid={`view-rename-${v.name}`}
+              title="Rename view"
+              onClick={(e) => {
+                e.stopPropagation();
+                const name = window.prompt("Rename view:", v.name);
+                if (name?.trim() && name.trim() !== v.name) {
+                  dispatchTop({ type: "updateView", id: v.id, changes: { name: name.trim() } });
+                }
+              }}
+              className="hidden rounded px-1 text-[11px] text-slate-500 hover:bg-slate-200 group-hover:block"
+            >
+              ✎
+            </button>
+            <button
+              data-testid={`view-delete-${v.name}`}
+              title="Delete view (the model is untouched)"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!window.confirm(`Delete view "${v.name}"? Elements stay in the model.`)) return;
+                const wasActive = v.id === activeViewId;
+                const error = dispatchTop({ type: "deleteView", id: v.id });
+                if (!error && wasActive) {
+                  const remaining = [...useAtlas.getState().ws.views.values()];
+                  const fallback = remaining.find((x) => x.kind === "landscape") ?? remaining[0];
+                  if (fallback) setActiveView(fallback.id);
+                }
+              }}
+              className="hidden rounded px-1 text-[11px] text-slate-500 hover:bg-red-100 hover:text-red-600 group-hover:block"
+            >
+              ✕
+            </button>
           </div>
         ))}
       </div>

@@ -22,7 +22,7 @@ import {
   type Ulid,
   type View,
 } from "@atlas/core";
-import { SupabaseStorageAdapter } from "@atlas/storage-supabase";
+import { RevisionConflictError, SupabaseStorageAdapter } from "@atlas/storage-supabase";
 import { createClient } from "@supabase/supabase-js";
 import { openapiSpec } from "./openapi-spec";
 
@@ -34,6 +34,8 @@ export const DEFAULT_WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 interface Env {
   ATLAS_API_TOKEN?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  /** Comma-separated GitHub usernames allowed to write. Unset = any signed-in user. */
+  ATLAS_ALLOWED_GITHUB?: string;
 }
 
 interface Ctx {
@@ -50,28 +52,49 @@ const json = (status: number, body: unknown): Response =>
 
 const err = (status: number, message: string): Response => json(status, { error: message });
 
-async function authorised(request: Request, env: Env): Promise<boolean> {
+async function authorised(request: Request, env: Env): Promise<{ ok: boolean; status: number; message?: string }> {
   const token =
     request.headers.get("x-api-key") ??
     (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-  if (!token) return false;
-  if (env.ATLAS_API_TOKEN && token === env.ATLAS_API_TOKEN) return true;
+  if (!token) return { ok: false, status: 401, message: "Missing token" };
+  if (env.ATLAS_API_TOKEN && token === env.ATLAS_API_TOKEN) return { ok: true, status: 200 };
+
   const who = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
     headers: { apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${token}` },
   });
-  return who.ok;
+  if (!who.ok) {
+    return { ok: false, status: 401, message: "Invalid token — sign in with GitHub or use the service token" };
+  }
+  // Optional allow-list: only named GitHub accounts may use the API.
+  const allowed = env.ATLAS_ALLOWED_GITHUB?.split(",").map((u) => u.trim().toLowerCase()).filter(Boolean);
+  if (allowed?.length) {
+    const user = (await who.json()) as { user_metadata?: { user_name?: string } };
+    const username = user.user_metadata?.user_name?.toLowerCase();
+    if (!username || !allowed.includes(username)) {
+      return { ok: false, status: 403, message: "This GitHub account is not authorised for the Atlas workspace" };
+    }
+  }
+  return { ok: true, status: 200 };
 }
 
-/** Load the workspace, creating the default row on first use. */
-async function loadWorkspace(adapter: SupabaseStorageAdapter, db: ReturnType<typeof createClient>): Promise<Workspace> {
+/** Create the workspace row on first use so loads never fail on a fresh database. */
+async function ensureWorkspaceRow(
+  adapter: SupabaseStorageAdapter,
+  db: ReturnType<typeof createClient>,
+): Promise<void> {
   try {
-    return await adapter.load();
+    await adapter.load();
   } catch {
     await db.from("workspaces").upsert([
       { id: DEFAULT_WORKSPACE_ID, name: "Default workspace", format_version: 1, stencil_packs: [] },
     ]);
-    return adapter.load();
   }
+}
+
+/** Load the workspace, creating the default row on first use. */
+async function loadWorkspace(adapter: SupabaseStorageAdapter, db: ReturnType<typeof createClient>): Promise<Workspace> {
+  await ensureWorkspaceRow(adapter, db);
+  return adapter.load();
 }
 
 type Mutator = (ws: Workspace, bus: CommandBus, nextId: () => Ulid) => unknown;
@@ -95,9 +118,8 @@ export async function onRequest(context: Ctx): Promise<Response> {
   // Public: the machine-readable contract.
   if (path[0] === "openapi.json" && method === "GET") return json(200, openapiSpec);
 
-  if (!(await authorised(request, env))) {
-    return err(401, "Missing or invalid token — use a GitHub session token or the service token");
-  }
+  const auth = await authorised(request, env);
+  if (!auth.ok) return err(auth.status, auth.message ?? "Unauthorised");
   if (!env.SUPABASE_SERVICE_ROLE_KEY) {
     return err(503, "API not configured: SUPABASE_SERVICE_ROLE_KEY secret is unset");
   }
@@ -109,23 +131,42 @@ export async function onRequest(context: Ctx): Promise<Response> {
 
   const body = async <T>(): Promise<T> => (await request.json()) as T;
 
-  /** Run a mutation through the command bus and persist. 400s carry the validation message. */
+  /**
+   * Run a mutation through the command bus and persist with an optimistic
+   * revision guard. On a concurrent-write conflict the mutation re-runs
+   * against fresh state (up to 3 attempts) — commands are revalidated each
+   * time, so retries stay correct. 400s carry the validation message.
+   */
   const mutate = async (fn: Mutator): Promise<Response> => {
-    const ws = await loadWorkspace(adapter, db);
-    const bus = new CommandBus(ws);
-    const ids = ulidFactory();
-    let result: unknown;
-    try {
-      result = fn(ws, bus, () => ids.next());
-    } catch (e) {
-      return err(400, e instanceof Error ? e.message : String(e));
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (attempt > 0) {
+        // Jittered backoff so a burst of writers spreads out instead of
+        // re-colliding in lockstep.
+        await new Promise((resolve) => setTimeout(resolve, 40 * attempt + Math.random() * 150));
+      }
+      await ensureWorkspaceRow(adapter, db);
+      const { workspace: ws, revision } = await adapter.loadWithRevision();
+      const bus = new CommandBus(ws);
+      const ids = ulidFactory();
+      let result: unknown;
+      try {
+        result = fn(ws, bus, () => ids.next());
+      } catch (e) {
+        return err(400, e instanceof Error ? e.message : String(e));
+      }
+      try {
+        await adapter.saveSnapshot(ws, { expectedRevision: revision });
+      } catch (e) {
+        if (e instanceof RevisionConflictError) continue;
+        throw e;
+      }
+      if (result === undefined) {
+        // 204 responses must not carry a body.
+        return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+      }
+      return json(method === "POST" ? 201 : 200, result);
     }
-    await adapter.saveSnapshot(ws);
-    if (result === undefined) {
-      // 204 responses must not carry a body.
-      return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
-    }
-    return json(method === "POST" ? 201 : 200, result);
+    return err(409, "Workspace is being modified concurrently — try again");
   };
 
   const resolveByName = (ws: Workspace, name: string): Element => {
