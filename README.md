@@ -60,7 +60,7 @@ core perf thresholds, and 60 Playwright end-to-end journeys against the real UI
 - **Hosted**: https://atlas-modelling.pages.dev (GitHub SSO) · model REST API at
   [`/api/v1`](https://atlas-modelling.pages.dev/api/v1/openapi.json) with
   [Swagger UI](https://atlas-modelling.pages.dev/api/docs) — see [docs/api.md](docs/api.md).
-- `docs/` — [research](docs/research.md), [ADRs](docs/adr/),
+- `docs/` — [user guide](docs/user-guide.md), [research](docs/research.md), [ADRs](docs/adr/),
   [file format](docs/format/workspace-format.md),
   [stencil format](docs/stencil-format.md).
 

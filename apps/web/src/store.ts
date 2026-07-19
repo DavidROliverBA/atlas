@@ -81,8 +81,8 @@ export interface AtlasStore {
   error: string | null;
   /** Direction of the last drill navigation, used for the zoom animation. */
   navDirection: "in" | "out" | null;
-  /** Full-screen/side overlays (connections ego-view, estate analysis). */
-  overlay: { type: "connections"; id: Ulid } | { type: "analysis" } | null;
+  /** Full-screen/side overlays (connections ego-view, estate analysis, help). */
+  overlay: { type: "connections"; id: Ulid } | { type: "analysis" } | { type: "help" } | null;
   /** Temporal lens applied to every view (§3.6). */
   temporal: TemporalContext;
   /** When set, the canvas renders a state-diff overlay between two contexts. */

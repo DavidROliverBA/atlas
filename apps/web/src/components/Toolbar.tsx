@@ -192,6 +192,14 @@ export function Toolbar() {
       >
         Analysis
       </button>
+      <button
+        data-testid="help-open"
+        className={btn}
+        title="User guide"
+        onClick={() => useAtlas.setState({ overlay: { type: "help" } })}
+      >
+        ? Guide
+      </button>
       <span className="mx-2 h-5 w-px bg-slate-200" />
       <div className="relative">
         <button data-testid="export" className={btn} onClick={() => setExportOpen((o) => !o)}>

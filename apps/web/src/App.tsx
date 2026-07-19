@@ -9,6 +9,7 @@ import { Breadcrumbs } from "./components/Breadcrumbs";
 import { ModeToggle } from "./components/ModeToggle";
 import { ConnectionsView } from "./components/ConnectionsView";
 import { AnalysisDrawer } from "./components/AnalysisDrawer";
+import { HelpPanel } from "./components/HelpPanel";
 import { TimelineBar } from "./components/TimelineBar";
 import { ChatPanel } from "./components/ChatPanel";
 
@@ -100,6 +101,9 @@ export default function App() {
           <Canvas />
           {overlay?.type === "analysis" && (
             <AnalysisDrawer onClose={() => useAtlas.setState({ overlay: null })} />
+          )}
+          {overlay?.type === "help" && (
+            <HelpPanel onClose={() => useAtlas.setState({ overlay: null })} />
           )}
         </main>
         <aside className="flex w-80 shrink-0 flex-col border-l border-slate-200 bg-white">
