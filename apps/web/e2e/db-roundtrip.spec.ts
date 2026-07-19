@@ -146,15 +146,24 @@ interface Stub {
   snap: Snap;
   ids: Record<string, string>;
   pushed: any[];
+  /** When true, the /workspace route fails so tests can simulate an outage. */
+  failWorkspace: boolean;
 }
 
 async function connectDbMode(page: Page): Promise<Stub> {
   const { snap, ids } = buildSnapshot();
-  const stub: Stub = { snap, ids, pushed: [] };
+  const stub: Stub = { snap, ids, pushed: [], failWorkspace: false };
 
-  await page.route("**/api/v1/workspace*", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(stub.snap) }),
-  );
+  await page.route("**/api/v1/workspace*", (route) => {
+    if (stub.failWorkspace) {
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "database unreachable" }),
+      });
+    }
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(stub.snap) });
+  });
   await page.route("**/api/v1/commands", (route) => {
     const body = route.request().postDataJSON() as { commands: any[] };
     for (const cmd of body.commands) {
@@ -287,6 +296,38 @@ test.describe("shared-database round trips (API ↔ UI)", () => {
 
     await page.getByTestId("delete-relationship").click();
     expect(stub.snap.relationships).toHaveLength(1);
+  });
+
+  test("outage handling: transient toasts for isolated failures, persistent banner after 3 in a row, clears on recovery", async ({
+    page,
+  }) => {
+    const stub = await connectDbMode(page);
+
+    // A single sync failure behaves as before: a dismissable toast, no banner.
+    stub.failWorkspace = true;
+    await page.getByTestId("db-sync").click();
+    await expect(page.getByTestId("toast-error")).toBeVisible();
+    await expect(page.getByTestId("db-outage-banner")).toHaveCount(0);
+    await page.getByTestId("toast-error").click(); // dismiss so it doesn't mask later assertions
+
+    // A second consecutive failure: still just a toast, still no banner.
+    await page.getByTestId("db-sync").click();
+    await expect(page.getByTestId("toast-error")).toBeVisible();
+    await expect(page.getByTestId("db-outage-banner")).toHaveCount(0);
+
+    // Third consecutive failure crosses the threshold: persistent amber banner.
+    await page.getByTestId("db-sync").click();
+    await expect(page.getByTestId("db-outage-banner")).toBeVisible();
+    await expect(page.getByTestId("db-outage-banner")).toHaveText("Shared database unreachable — retrying…");
+
+    // The banner doesn't auto-dismiss like a toast does.
+    await page.waitForTimeout(300);
+    await expect(page.getByTestId("db-outage-banner")).toBeVisible();
+
+    // First success afterwards clears the banner (and, implicitly, the counter).
+    stub.failWorkspace = false;
+    await page.getByTestId("db-sync").click();
+    await expect(page.getByTestId("db-outage-banner")).toHaveCount(0);
   });
 
   test("switching back to Local restores the untouched browser workspace", async ({ page }) => {

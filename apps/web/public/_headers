@@ -1,0 +1,30 @@
+# Cloudflare Pages header rules (applied at the CDN edge — NOT honoured by
+# `vite dev`/`vite preview`, only by an actual Pages deployment). Keep this
+# conservative: the app is a single-origin SPA that only talks to itself and
+# the Supabase project backing shared-database mode, so the default policy
+# is strict; /api/docs (Swagger UI) is the one page that legitimately needs
+# a third-party script/style source, so it gets a scoped, looser override.
+#
+# What the app actually loads, verified against src/ and the production
+# build (apps/web/dist) before writing this:
+#   - scripts/styles: same-origin build output only (no other app page pulls
+#     in a third-party script or stylesheet)
+#   - network: same-origin fetch, plus Supabase (https for REST, wss for
+#     Realtime) at https://gpklzsbyrvwgauvoolsx.supabase.co
+#   - images: same-origin only today, but data: is allowed defensively since
+#     inline SVG/icon data URIs are a common, low-risk addition
+#   - /api/docs (functions/api/docs.js): loads swagger-ui-dist from
+#     unpkg.com and inlines its init `<script>` + a small `<style>` block —
+#     the only page in the app that needs 'unsafe-inline'/a third-party host
+
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://gpklzsbyrvwgauvoolsx.supabase.co wss://gpklzsbyrvwgauvoolsx.supabase.co; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+# More specific path wins for a given header name, so this overrides the CSP
+# above only for the Swagger UI page — the rest of the app keeps the
+# stricter, unpkg-free policy.
+/api/docs
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https://unpkg.com; font-src 'self' data: https://unpkg.com; connect-src 'self' https://gpklzsbyrvwgauvoolsx.supabase.co wss://gpklzsbyrvwgauvoolsx.supabase.co; base-uri 'self'; form-action 'self'; frame-ancestors 'none'

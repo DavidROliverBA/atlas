@@ -1,8 +1,18 @@
-import type { Element } from "@atlas/core";
+import type { Element, View, ViewKind } from "@atlas/core";
 import { VIEW_PLACEMENT } from "@atlas/core";
 import { stencilFor } from "../stencils";
 import { useAtlas } from "../store";
 import { freeSpot } from "./Palette";
+
+/** Kind-grouping order and headings for the Views list — empty groups are omitted. */
+const VIEW_GROUP_ORDER: ViewKind[] = ["landscape", "context", "container", "component", "custom"];
+const VIEW_GROUP_LABELS: Record<ViewKind, string> = {
+  landscape: "Landscape",
+  context: "Context",
+  container: "Container",
+  component: "Component",
+  custom: "Custom",
+};
 
 function TreeNode({ element, depth }: { element: Element; depth: number }) {
   const ws = useAtlas((s) => s.ws);
@@ -69,6 +79,15 @@ export function ModelTree() {
   const roots = ws.children(null).sort((a, b) => a.name.localeCompare(b.name));
   const views = [...ws.views.values()].sort((a, b) => a.name.localeCompare(b.name));
 
+  // Bucket by kind in a fixed display order; each bucket stays alphabetical
+  // because `views` was already sorted by name before grouping.
+  const viewGroups = new Map<ViewKind, View[]>();
+  for (const v of views) {
+    const bucket = viewGroups.get(v.kind);
+    if (bucket) bucket.push(v);
+    else viewGroups.set(v.kind, [v]);
+  }
+
   return (
     <div className="flex-1 overflow-y-auto p-3">
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Model</h2>
@@ -98,51 +117,61 @@ export function ModelTree() {
         </button>
       </div>
       <div data-testid="view-list">
-        {views.map((v) => (
-          <div
-            key={v.id}
-            data-testid={`view-${v.name}`}
-            onClick={() => {
-              useAtlas.setState({ navDirection: null });
-              setActiveView(v.id);
-            }}
-            className={`group flex cursor-pointer items-center gap-1 truncate rounded px-1.5 py-1 text-sm ${
-              v.id === activeViewId ? "bg-blue-100 text-blue-900" : "hover:bg-slate-100"
-            }`}
-          >
-            <span className="min-w-0 flex-1 truncate">{v.name}</span>
-            <button
-              data-testid={`view-rename-${v.name}`}
-              title="Rename view"
-              onClick={(e) => {
-                e.stopPropagation();
-                const name = window.prompt("Rename view:", v.name);
-                if (name?.trim() && name.trim() !== v.name) {
-                  dispatchTop({ type: "updateView", id: v.id, changes: { name: name.trim() } });
-                }
-              }}
-              className="hidden rounded px-1 text-[11px] text-slate-500 hover:bg-slate-200 group-hover:block"
+        {VIEW_GROUP_ORDER.filter((kind) => viewGroups.has(kind)).map((kind) => (
+          <div key={kind}>
+            <h3
+              data-testid={`view-group-${kind}`}
+              className="mb-0.5 mt-2 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400 first:mt-0"
             >
-              ✎
-            </button>
-            <button
-              data-testid={`view-delete-${v.name}`}
-              title="Delete view (the model is untouched)"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!window.confirm(`Delete view "${v.name}"? Elements stay in the model.`)) return;
-                const wasActive = v.id === activeViewId;
-                const error = dispatchTop({ type: "deleteView", id: v.id });
-                if (!error && wasActive) {
-                  const remaining = [...useAtlas.getState().ws.views.values()];
-                  const fallback = remaining.find((x) => x.kind === "landscape") ?? remaining[0];
-                  if (fallback) setActiveView(fallback.id);
-                }
-              }}
-              className="hidden rounded px-1 text-[11px] text-slate-500 hover:bg-red-100 hover:text-red-600 group-hover:block"
-            >
-              ✕
-            </button>
+              {VIEW_GROUP_LABELS[kind]}
+            </h3>
+            {viewGroups.get(kind)!.map((v) => (
+              <div
+                key={v.id}
+                data-testid={`view-${v.name}`}
+                onClick={() => {
+                  useAtlas.setState({ navDirection: null });
+                  setActiveView(v.id);
+                }}
+                className={`group flex cursor-pointer items-center gap-1 truncate rounded px-1.5 py-1 text-sm ${
+                  v.id === activeViewId ? "bg-blue-100 text-blue-900" : "hover:bg-slate-100"
+                }`}
+              >
+                <span className="min-w-0 flex-1 truncate">{v.name}</span>
+                <button
+                  data-testid={`view-rename-${v.name}`}
+                  title="Rename view"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const name = window.prompt("Rename view:", v.name);
+                    if (name?.trim() && name.trim() !== v.name) {
+                      dispatchTop({ type: "updateView", id: v.id, changes: { name: name.trim() } });
+                    }
+                  }}
+                  className="hidden rounded px-1 text-[11px] text-slate-500 hover:bg-slate-200 group-hover:block"
+                >
+                  ✎
+                </button>
+                <button
+                  data-testid={`view-delete-${v.name}`}
+                  title="Delete view (the model is untouched)"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!window.confirm(`Delete view "${v.name}"? Elements stay in the model.`)) return;
+                    const wasActive = v.id === activeViewId;
+                    const error = dispatchTop({ type: "deleteView", id: v.id });
+                    if (!error && wasActive) {
+                      const remaining = [...useAtlas.getState().ws.views.values()];
+                      const fallback = remaining.find((x) => x.kind === "landscape") ?? remaining[0];
+                      if (fallback) setActiveView(fallback.id);
+                    }
+                  }}
+                  className="hidden rounded px-1 text-[11px] text-slate-500 hover:bg-red-100 hover:text-red-600 group-hover:block"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
           </div>
         ))}
       </div>

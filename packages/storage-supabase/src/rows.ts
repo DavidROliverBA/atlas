@@ -67,6 +67,8 @@ export interface ViewRow {
 export interface PlacementRow {
   view_id: string;
   element_id: string;
+  /** Denormalised from the parent view so loads can filter per-workspace (§P2 gap fix). */
+  workspace_id: string;
   x: number;
   y: number;
   width: number | null;
@@ -190,6 +192,7 @@ export function viewToRows(v: View, workspaceId: string): { view: ViewRow; place
     placements: v.placements.map((p) => ({
       view_id: v.id,
       element_id: p.elementId,
+      workspace_id: workspaceId,
       x: p.x,
       y: p.y,
       width: orNull(p.width),

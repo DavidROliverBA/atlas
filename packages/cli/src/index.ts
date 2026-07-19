@@ -14,6 +14,7 @@ import {
   workspaceFromFiles,
   type FileMap,
 } from "@atlas/core";
+import { materialiseGitRef, parseGitRange } from "./git.js";
 
 export function readWorkspaceDir(dir: string): FileMap {
   const files: FileMap = new Map();
@@ -119,9 +120,21 @@ export function run(argv: string[]): number {
         return 0;
       }
       case "diff": {
+        if (rest[0] === "--git") {
+          const [range, path] = rest.slice(1);
+          const parsed = range ? parseGitRange(range) : null;
+          if (!parsed) {
+            console.error("usage: atlas diff --git <a>..<b> [path]");
+            return 2;
+          }
+          const dirA = materialiseGitRef(process.cwd(), parsed.refA, path);
+          const dirB = materialiseGitRef(process.cwd(), parsed.refB, path);
+          for (const line of diffDirs(dirA, dirB)) console.log(line);
+          return 0;
+        }
         const [dirA, dirB] = rest;
         if (!dirA || !dirB) {
-          console.error("usage: atlas diff <dirA> <dirB>");
+          console.error("usage: atlas diff <dirA> <dirB>  |  atlas diff --git <a>..<b> [path]");
           return 2;
         }
         for (const line of diffDirs(dirA, dirB)) console.log(line);

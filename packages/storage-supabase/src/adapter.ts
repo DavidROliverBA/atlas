@@ -68,7 +68,7 @@ export class SupabaseStorageAdapter {
       this.supabase.from("elements").select("*").eq("workspace_id", this.workspaceId),
       this.supabase.from("relationships").select("*").eq("workspace_id", this.workspaceId),
       this.supabase.from("views").select("*").eq("workspace_id", this.workspaceId),
-      this.supabase.from("view_placements").select("*"),
+      this.supabase.from("view_placements").select("*").eq("workspace_id", this.workspaceId),
       this.supabase.from("states").select("*").eq("workspace_id", this.workspaceId),
     ]);
     const firstError =

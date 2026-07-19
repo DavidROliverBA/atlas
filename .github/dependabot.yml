@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Monorepo root: pnpm workspaces (apps/* + packages/*) are covered from a
+  # single npm-ecosystem entry — Dependabot follows pnpm-workspace.yaml.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

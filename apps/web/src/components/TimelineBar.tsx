@@ -6,7 +6,16 @@
  */
 
 import { useMemo, useState } from "react";
-import { diffContexts, diffReport, estateTco, tcoDiff, type TemporalContext } from "@atlas/core";
+import {
+  diffContexts,
+  diffReport,
+  estateTco,
+  tcoDiff,
+  type Command,
+  type NamedState,
+  type TemporalContext,
+  type Ulid,
+} from "@atlas/core";
 import { useAtlas } from "../store";
 
 const MONTH_MS = 30.44 * 24 * 3600 * 1000;
@@ -31,6 +40,19 @@ function formatDelta(amount: number, mixed: boolean): string {
   return `${sign}${formatCompact(Math.abs(amount), mixed)}`;
 }
 
+/** Same as `formatCompact`, but with a specific currency's own symbol (always safe — never mixed). */
+function formatCompactCurrency(amount: number, currency: string): string {
+  return new Intl.NumberFormat("en-GB", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }).format(
+    amount,
+  );
+}
+
+/** Signed compact delta in one currency, e.g. "+$120k". */
+function formatDeltaCurrency(amount: number, currency: string): string {
+  const sign = amount > 0 ? "+" : amount < 0 ? "-" : "";
+  return `${sign}${formatCompactCurrency(Math.abs(amount), currency)}`;
+}
+
 function monthRange(startYear: number, endYear: number): string[] {
   const out: string[] = [];
   for (let y = startYear; y <= endYear; y++) {
@@ -45,13 +67,35 @@ function ctxLabel(ws: ReturnType<typeof useAtlas.getState>["ws"], ctx: TemporalC
   return ws.states.get(ctx.stateId)?.name ?? "state";
 }
 
-/** Create, rename, date and delete named states — the authoring side of the scrubber. */
+/** States sort by explicit order first (undated/unordered states sort last), then date, then name. */
+function compareStates(a: NamedState, b: NamedState): number {
+  const orderA = a.order ?? Infinity;
+  const orderB = b.order ?? Infinity;
+  if (orderA !== orderB) return orderA - orderB;
+  const dateCmp = (a.date ?? "").localeCompare(b.date ?? "");
+  if (dateCmp !== 0) return dateCmp;
+  return a.name.localeCompare(b.name);
+}
+
+/** Renumber every state's `order` to its position in `states`, except swap `index` and `otherIndex`. */
+function reorderCommand(states: NamedState[], index: number, otherIndex: number): Command {
+  const commands: Command[] = states.map((s, i) => ({
+    type: "updateState",
+    id: s.id,
+    changes: { order: i },
+  }));
+  commands[index] = { type: "updateState", id: states[index]!.id, changes: { order: otherIndex } };
+  commands[otherIndex] = { type: "updateState", id: states[otherIndex]!.id, changes: { order: index } };
+  return { type: "batch", commands };
+}
+
+/** Create, rename, date, reorder and delete named states — the authoring side of the scrubber. */
 function StatesManager({ onClose }: { onClose: () => void }) {
   const ws = useAtlas((s) => s.ws);
   useAtlas((s) => s.rev);
   const dispatch = useAtlas((s) => s.dispatch);
   const newId = useAtlas((s) => s.newId);
-  const states = [...ws.states.values()].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+  const states = [...ws.states.values()].sort(compareStates);
 
   return (
     <div data-testid="states-manager" className="border-t border-slate-100 bg-slate-50 px-4 py-2">
@@ -64,8 +108,28 @@ function StatesManager({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <div className="flex flex-col gap-1.5">
-        {states.map((s) => (
+        {states.map((s, i) => (
           <div key={s.id} className="flex items-center gap-1.5" data-testid={`state-row-${s.name}`}>
+            <div className="flex flex-col leading-none">
+              <button
+                data-testid={`state-up-${s.name}`}
+                title="Move earlier"
+                disabled={i === 0}
+                onClick={() => dispatch(reorderCommand(states, i, i - 1))}
+                className="text-[9px] text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:hover:text-slate-400"
+              >
+                ▲
+              </button>
+              <button
+                data-testid={`state-down-${s.name}`}
+                title="Move later"
+                disabled={i === states.length - 1}
+                onClick={() => dispatch(reorderCommand(states, i, i + 1))}
+                className="text-[9px] text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:hover:text-slate-400"
+              >
+                ▼
+              </button>
+            </div>
             <input
               className="w-44 rounded border border-slate-300 px-1.5 py-0.5 text-xs"
               defaultValue={s.name}
@@ -120,8 +184,16 @@ export function TimelineBar() {
   const diffPair = useAtlas((s) => s.diffPair);
   const [showReport, setShowReport] = useState(false);
   const [managing, setManaging] = useState(false);
+  // Pending compare selections (used to seed diffPair when compare mode is switched on, and to
+  // steer it live once it's active). Fall back to first/last of the sorted states until touched.
+  const [diffAId, setDiffAId] = useState<Ulid | null>(null);
+  const [diffBId, setDiffBId] = useState<Ulid | null>(null);
 
-  const states = [...ws.states.values()].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+  const states = [...ws.states.values()].sort(compareStates);
+  const defaultA = states[0]?.id ?? null;
+  const defaultB = states[states.length - 1]?.id ?? null;
+  const effectiveA = diffAId && states.some((s) => s.id === diffAId) ? diffAId : defaultA;
+  const effectiveB = diffBId && states.some((s) => s.id === diffBId) ? diffBId : defaultB;
 
   const months = useMemo(() => {
     const dates: string[] = [];
@@ -174,6 +246,14 @@ export function TimelineBar() {
       active ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
     }`;
 
+  const startCompare = (aId: Ulid, bId: Ulid) => {
+    useAtlas.setState({
+      diffPair: { a: { type: "state", stateId: aId }, b: { type: "state", stateId: bId } },
+      temporal: { type: "all" },
+    });
+    setShowReport(true);
+  };
+
   return (
     <div className="border-t border-slate-200 bg-white" data-testid="timeline-bar">
       <div className="flex items-center gap-2 px-3 py-2">
@@ -187,7 +267,7 @@ export function TimelineBar() {
         </button>
         <button
           data-testid="states-manage"
-          title="Create, rename or delete named states"
+          title="Create, rename, reorder or delete named states"
           className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-200"
           onClick={() => setManaging((m) => !m)}
         >
@@ -233,39 +313,72 @@ export function TimelineBar() {
           title="Estate annual run-rate under the active temporal context"
         >
           {runRate.currencies.length > 1
-            ? "Run rate: mixed"
+            ? `Run rate: ${runRate.currencies
+                .map((c) => formatCompactCurrency(runRate.byCurrency[c]!.totalAnnual, c))
+                .join(" + ")} /yr`
             : `Run rate: ${formatCompact(runRate.totalAnnual, false)}/yr`}
         </span>
 
         {states.length >= 2 && (
-          <button
-            data-testid="diff-toggle"
-            className={`rounded-md border px-2 py-1 text-xs ${
-              diffPair
-                ? "border-amber-400 bg-amber-50 text-amber-800"
-                : "border-slate-300 text-slate-600 hover:bg-slate-50"
-            }`}
-            onClick={() => {
-              if (diffPair) {
-                useAtlas.setState({ diffPair: null });
-                setShowReport(false);
-              } else {
-                const [a, b] = [states[0]!, states[states.length - 1]!];
-                useAtlas.setState({
-                  diffPair: {
-                    a: { type: "state", stateId: a.id },
-                    b: { type: "state", stateId: b.id },
-                  },
-                  temporal: { type: "all" },
-                });
-                setShowReport(true);
-              }
-            }}
-          >
-            {diffPair
-              ? "Exit compare"
-              : `Compare ${states[0]!.name} → ${states[states.length - 1]!.name}`}
-          </button>
+          <>
+            <select
+              data-testid="diff-a"
+              title="Compare from"
+              className="rounded-md border border-slate-300 px-1.5 py-0.5 text-xs"
+              value={effectiveA ?? ""}
+              onChange={(e) => {
+                const id = e.target.value as Ulid;
+                setDiffAId(id);
+                if (diffPair) startCompare(id, effectiveB!);
+              }}
+            >
+              {states
+                .filter((s) => s.id !== effectiveB)
+                .map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+            </select>
+            <span className="text-xs text-slate-400">→</span>
+            <select
+              data-testid="diff-b"
+              title="Compare to"
+              className="rounded-md border border-slate-300 px-1.5 py-0.5 text-xs"
+              value={effectiveB ?? ""}
+              onChange={(e) => {
+                const id = e.target.value as Ulid;
+                setDiffBId(id);
+                if (diffPair) startCompare(effectiveA!, id);
+              }}
+            >
+              {states
+                .filter((s) => s.id !== effectiveA)
+                .map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+            </select>
+            <button
+              data-testid="diff-toggle"
+              className={`rounded-md border px-2 py-1 text-xs ${
+                diffPair
+                  ? "border-amber-400 bg-amber-50 text-amber-800"
+                  : "border-slate-300 text-slate-600 hover:bg-slate-50"
+              }`}
+              onClick={() => {
+                if (diffPair) {
+                  useAtlas.setState({ diffPair: null });
+                  setShowReport(false);
+                } else {
+                  startCompare(effectiveA!, effectiveB!);
+                }
+              }}
+            >
+              {diffPair ? "Exit compare" : "Compare"}
+            </button>
+          </>
         )}
       </div>
 
@@ -283,36 +396,70 @@ export function TimelineBar() {
           data-testid="timeline-cost-diff"
           className="space-y-0.5 border-t border-slate-100 bg-slate-50 px-4 py-2 text-xs leading-relaxed text-slate-700"
         >
-          <div>
-            Annual: {formatCompact(costDelta.delta.annualA, costDelta.mixed)} →{" "}
-            {formatCompact(costDelta.delta.annualB, costDelta.mixed)} (Δ{" "}
-            <span
-              className={
-                costDelta.delta.annualDelta > 0
-                  ? "font-semibold text-red-600"
-                  : costDelta.delta.annualDelta < 0
-                    ? "font-semibold text-emerald-600"
-                    : ""
-              }
-            >
-              {formatDelta(costDelta.delta.annualDelta, costDelta.mixed)}
-            </span>
-            )
-          </div>
-          <div>
-            {TCO_DIFF_YEARS}-yr TCO Δ:{" "}
-            <span
-              className={
-                costDelta.delta.tcoDelta > 0
-                  ? "font-semibold text-red-600"
-                  : costDelta.delta.tcoDelta < 0
-                    ? "font-semibold text-emerald-600"
-                    : ""
-              }
-            >
-              {formatDelta(costDelta.delta.tcoDelta, costDelta.mixed)}
-            </span>
-          </div>
+          {costDelta.mixed ? (
+            Object.entries(costDelta.delta.byCurrency).map(([currency, d]) => (
+              <div key={currency}>
+                {currency} annual: {formatCompactCurrency(d.annualA, currency)} →{" "}
+                {formatCompactCurrency(d.annualB, currency)} (Δ{" "}
+                <span
+                  className={
+                    d.annualDelta > 0
+                      ? "font-semibold text-red-600"
+                      : d.annualDelta < 0
+                        ? "font-semibold text-emerald-600"
+                        : ""
+                  }
+                >
+                  {formatDeltaCurrency(d.annualDelta, currency)}
+                </span>
+                ) · {TCO_DIFF_YEARS}-yr TCO Δ:{" "}
+                <span
+                  className={
+                    d.tcoDelta > 0
+                      ? "font-semibold text-red-600"
+                      : d.tcoDelta < 0
+                        ? "font-semibold text-emerald-600"
+                        : ""
+                  }
+                >
+                  {formatDeltaCurrency(d.tcoDelta, currency)}
+                </span>
+              </div>
+            ))
+          ) : (
+            <>
+              <div>
+                Annual: {formatCompact(costDelta.delta.annualA, costDelta.mixed)} →{" "}
+                {formatCompact(costDelta.delta.annualB, costDelta.mixed)} (Δ{" "}
+                <span
+                  className={
+                    costDelta.delta.annualDelta > 0
+                      ? "font-semibold text-red-600"
+                      : costDelta.delta.annualDelta < 0
+                        ? "font-semibold text-emerald-600"
+                        : ""
+                  }
+                >
+                  {formatDelta(costDelta.delta.annualDelta, costDelta.mixed)}
+                </span>
+                )
+              </div>
+              <div>
+                {TCO_DIFF_YEARS}-yr TCO Δ:{" "}
+                <span
+                  className={
+                    costDelta.delta.tcoDelta > 0
+                      ? "font-semibold text-red-600"
+                      : costDelta.delta.tcoDelta < 0
+                        ? "font-semibold text-emerald-600"
+                        : ""
+                  }
+                >
+                  {formatDelta(costDelta.delta.tcoDelta, costDelta.mixed)}
+                </span>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

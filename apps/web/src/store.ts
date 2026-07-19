@@ -97,6 +97,12 @@ export interface AtlasStore {
   dbToken: string | null;
   /** Whether the ⌘K command palette is open. */
   paletteOpen: boolean;
+  /** Consecutive failed `syncDb` calls; resets to 0 on the next success. */
+  syncFailureCount: number;
+  /** True once 3+ consecutive sync failures have occurred — drives the persistent outage banner. */
+  dbOutage: boolean;
+  /** Current poll interval for the db-mode sync loop (backs off during an outage). */
+  pollIntervalMs: number;
   /** Switch to the shared database workspace (loads it via the API). */
   connectDb(): Promise<void>;
   /** Return to the browser-local workspace. */
@@ -115,6 +121,19 @@ export interface AtlasStore {
   drillInto(elementId: Ulid): Ulid | null;
   resetToDemo(): void;
   replaceWorkspace(ws: Workspace): void;
+}
+
+/** Db-mode poll interval steps: fast while healthy, backing off during an outage. */
+export const POLL_INTERVAL_MS = 8000;
+const POLL_INTERVAL_BACKOFF_MS = 30000;
+const POLL_INTERVAL_MAX_MS = 60000;
+/** Consecutive sync failures before we stop toasting and show the persistent banner instead. */
+const OUTAGE_THRESHOLD = 3;
+
+function pollIntervalForFailures(count: number): number {
+  if (count < OUTAGE_THRESHOLD) return POLL_INTERVAL_MS;
+  if (count === OUTAGE_THRESHOLD) return POLL_INTERVAL_BACKOFF_MS;
+  return POLL_INTERVAL_MAX_MS;
 }
 
 const ids = ulidFactory();
@@ -160,6 +179,9 @@ export const useAtlas = create<AtlasStore>((set, get) => {
     source: "local",
     dbToken: null,
     paletteOpen: false,
+    syncFailureCount: 0,
+    dbOutage: false,
+    pollIntervalMs: POLL_INTERVAL_MS,
 
     async connectDb() {
       const token = await apiToken();
@@ -179,6 +201,9 @@ export const useAtlas = create<AtlasStore>((set, get) => {
           activeViewId: ws.views.size ? firstViewId(ws) : get().activeViewId,
           selection: null,
           rev: get().rev + 1,
+          syncFailureCount: 0,
+          dbOutage: false,
+          pollIntervalMs: POLL_INTERVAL_MS,
         });
         // A database workspace may legitimately have no views yet.
         if (!ws.views.size) {
@@ -207,6 +232,9 @@ export const useAtlas = create<AtlasStore>((set, get) => {
         activeViewId: firstViewId(ws),
         selection: null,
         rev: get().rev + 1,
+        syncFailureCount: 0,
+        dbOutage: false,
+        pollIntervalMs: POLL_INTERVAL_MS,
       });
     },
 
@@ -216,7 +244,15 @@ export const useAtlas = create<AtlasStore>((set, get) => {
       try {
         await pushesSettled();
         const data = await fetchDbWorkspace(dbToken);
-        if (JSON.stringify(data) === JSON.stringify(ws.toData())) return;
+        // A successful round-trip ends any outage: clear the banner/counter and
+        // restore the fast poll interval, regardless of whether data changed.
+        const wasOutage = get().dbOutage || get().syncFailureCount > 0;
+        if (JSON.stringify(data) === JSON.stringify(ws.toData())) {
+          if (wasOutage) {
+            set({ syncFailureCount: 0, dbOutage: false, pollIntervalMs: POLL_INTERVAL_MS });
+          }
+          return;
+        }
         const next = Workspace.fromData(data);
         const bus = new CommandBus(next, { stencils: stencilRegistry });
         set({
@@ -234,9 +270,23 @@ export const useAtlas = create<AtlasStore>((set, get) => {
                 ? selection
                 : null,
           rev: get().rev + 1,
+          syncFailureCount: 0,
+          dbOutage: false,
+          pollIntervalMs: POLL_INTERVAL_MS,
         });
       } catch (err) {
-        set({ error: err instanceof Error ? err.message : String(err) });
+        const message = err instanceof Error ? err.message : String(err);
+        const syncFailureCount = get().syncFailureCount + 1;
+        const dbOutage = syncFailureCount >= OUTAGE_THRESHOLD;
+        set({
+          // Below the threshold: same transient-toast behaviour as before. At/after
+          // the threshold: stop re-toasting the same generic error every cycle —
+          // the persistent banner takes over instead.
+          error: dbOutage ? get().error : message,
+          syncFailureCount,
+          dbOutage,
+          pollIntervalMs: pollIntervalForFailures(syncFailureCount),
+        });
       }
     },
 

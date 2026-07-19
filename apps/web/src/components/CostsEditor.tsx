@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   annualisedAmount,
   type CostCategory,
@@ -87,6 +87,141 @@ function validateEntry(entry: CostEntry): string | null {
     return "Valid from must be before valid to";
   }
   return null;
+}
+
+/** The CSV header CostsEditor's importer accepts — required columns first, optional from `currency` on. */
+const CSV_REQUIRED_COLUMNS = ["label", "category", "classification", "kind", "amount"] as const;
+const CSV_OPTIONAL_COLUMNS = [
+  "currency",
+  "period",
+  "amortiseYears",
+  "confidence",
+  "validFrom",
+  "validTo",
+] as const;
+const CSV_COLUMNS = [...CSV_REQUIRED_COLUMNS, ...CSV_OPTIONAL_COLUMNS];
+const CSV_HEADER_HINT = CSV_COLUMNS.join(",");
+
+/**
+ * Minimal RFC-4180-ish line splitter: handles quoted fields (`"a, b"`) and
+ * escaped quotes (`""`) without a dependency, per the brief. Only splits on
+ * commas within a single line — embedded newlines inside a quoted field are
+ * out of scope, since the import textarea is meant for small pasted tables.
+ */
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      cells.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  cells.push(cur);
+  return cells;
+}
+
+type CsvRowResult = { line: number; entry: CostEntry | null; error: string | null };
+type CsvParseResult = { headerError: string | null; rows: CsvRowResult[] };
+
+/**
+ * Parses and validates pasted CSV against the same rules `validateEntry`
+ * enforces, plus enum checks for category/classification/kind (and, since
+ * they're structured fields too, period/confidence when present). `id` on
+ * every returned entry is `""` — a placeholder, since parsing runs on every
+ * keystroke for the inline error preview; real ids come from the store's
+ * `newId()` at apply time, once every row has been confirmed valid.
+ */
+function parseCostCsv(text: string): CsvParseResult {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return { headerError: "Paste a CSV with a header row", rows: [] };
+
+  const header = parseCsvLine(lines[0]!).map((h) => h.trim());
+  const unknown = header.filter((h) => !CSV_COLUMNS.includes(h as (typeof CSV_COLUMNS)[number]));
+  if (unknown.length) return { headerError: `Unknown column(s): ${unknown.join(", ")}`, rows: [] };
+  const missing = CSV_REQUIRED_COLUMNS.filter((c) => !header.includes(c));
+  if (missing.length) return { headerError: `Missing required column(s): ${missing.join(", ")}`, rows: [] };
+
+  const rows: CsvRowResult[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cells = parseCsvLine(lines[i]!);
+    const record: Record<string, string> = {};
+    header.forEach((h, idx) => {
+      record[h] = (cells[idx] ?? "").trim();
+    });
+    rows.push({ line: i + 1, ...buildRowEntry(record) });
+  }
+  return { headerError: null, rows };
+}
+
+function buildRowEntry(cells: Record<string, string>): { entry: CostEntry | null; error: string | null } {
+  if (!CATEGORIES.includes(cells.category as CostCategory)) {
+    return { entry: null, error: `Unknown category "${cells.category ?? ""}"` };
+  }
+  if (!CLASSIFICATIONS.includes(cells.classification as CostClassification)) {
+    return { entry: null, error: `Unknown classification "${cells.classification ?? ""}"` };
+  }
+  if (cells.kind !== "recurring" && cells.kind !== "one-off") {
+    return { entry: null, error: `Kind must be "recurring" or "one-off" (got "${cells.kind ?? ""}")` };
+  }
+  const amount = Number(cells.amount);
+  if (cells.amount === "" || Number.isNaN(amount)) {
+    return { entry: null, error: `Amount must be a number (got "${cells.amount ?? ""}")` };
+  }
+
+  const entry: CostEntry = {
+    id: "",
+    label: cells.label ?? "",
+    category: cells.category as CostCategory,
+    classification: cells.classification as CostClassification,
+    kind: cells.kind as CostEntry["kind"],
+    amount,
+  };
+
+  if (cells.currency) entry.currency = cells.currency.toUpperCase();
+  if (entry.kind === "recurring") {
+    if (cells.period) {
+      if (cells.period !== "monthly" && cells.period !== "annual") {
+        return { entry: null, error: `Period must be "monthly" or "annual" (got "${cells.period}")` };
+      }
+      entry.period = cells.period as "monthly" | "annual";
+    }
+  } else if (cells.amortiseYears) {
+    const years = Number(cells.amortiseYears);
+    if (Number.isNaN(years) || years <= 0) {
+      return { entry: null, error: `Amortise years must be a positive number (got "${cells.amortiseYears}")` };
+    }
+    entry.amortiseYears = years;
+  }
+  if (cells.confidence) {
+    if (!CONFIDENCES.includes(cells.confidence as CostConfidence)) {
+      return { entry: null, error: `Unknown confidence "${cells.confidence}"` };
+    }
+    entry.confidence = cells.confidence as CostConfidence;
+  }
+  if (cells.validFrom) entry.validFrom = cells.validFrom;
+  if (cells.validTo) entry.validTo = cells.validTo;
+
+  const issue = validateEntry(entry);
+  if (issue) return { entry: null, error: issue };
+  return { entry, error: null };
 }
 
 /**
@@ -354,6 +489,19 @@ export function CostsEditor({ element }: { element: Element }) {
   const newId = useAtlas((s) => s.newId);
   const [collapsed, setCollapsed] = useState(true);
   const [pending, setPending] = useState<CostEntry | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+
+  const parsedImport = useMemo(
+    () => (importText.trim() ? parseCostCsv(importText) : null),
+    [importText],
+  );
+  const importErrors = parsedImport
+    ? parsedImport.headerError
+      ? [parsedImport.headerError]
+      : parsedImport.rows.filter((r) => r.error).map((r) => `Row ${r.line}: ${r.error}`)
+    : [];
+  const canApplyImport = !!parsedImport && !parsedImport.headerError && parsedImport.rows.length > 0 && importErrors.length === 0;
 
   const entries = element.costs ?? [];
   const states = [...ws.states.values()].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
@@ -387,6 +535,14 @@ export function CostsEditor({ element }: { element: Element }) {
     setCollapsed(false);
   };
 
+  const applyImport = () => {
+    if (!parsedImport || !canApplyImport) return;
+    const imported = parsedImport.rows.map((r) => ({ ...(r.entry as CostEntry), id: newId() }));
+    commit([...entries, ...imported]);
+    setImportOpen(false);
+    setImportText("");
+  };
+
   return (
     <div data-testid="costs-section" className="border-t border-slate-200 pt-3">
       <button
@@ -417,14 +573,67 @@ export function CostsEditor({ element }: { element: Element }) {
               onDelete={() => setPending(null)}
             />
           )}
-          <button
-            type="button"
-            data-testid="cost-add"
-            onClick={addCost}
-            className="self-start rounded-md bg-slate-800 px-2 py-1 text-xs text-white hover:bg-slate-700"
-          >
-            + Add cost
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="cost-add"
+              onClick={addCost}
+              className="self-start rounded-md bg-slate-800 px-2 py-1 text-xs text-white hover:bg-slate-700"
+            >
+              + Add cost
+            </button>
+            <button
+              type="button"
+              data-testid="cost-import"
+              title={`Import a CSV with header: ${CSV_HEADER_HINT} (currency onwards optional; blank cells are omitted)`}
+              onClick={() => setImportOpen((v) => !v)}
+              className="self-start rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
+            >
+              Import CSV
+            </button>
+          </div>
+
+          {importOpen && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+              <textarea
+                data-testid="cost-import-text"
+                title={`Header: ${CSV_HEADER_HINT}`}
+                placeholder={CSV_HEADER_HINT}
+                rows={4}
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                className={`${inputClass} font-mono text-xs`}
+              />
+              {importErrors.length > 0 && (
+                <ul data-testid="cost-import-errors" className="mt-1.5 list-disc pl-4 text-[11px] text-red-600">
+                  {importErrors.map((msg) => (
+                    <li key={msg}>{msg}</li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="cost-import-apply"
+                  disabled={!canApplyImport}
+                  onClick={applyImport}
+                  className="rounded-md bg-slate-800 px-2 py-1 text-xs text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Import
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImportOpen(false);
+                    setImportText("");
+                  }}
+                  className="text-xs text-slate-500 hover:text-slate-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -18,14 +18,40 @@ Authorization: Bearer <token>     # or
 x-api-key: <token>
 ```
 
-Two token types are accepted:
+Three token types are accepted on the model API; the AI proxy (`/api/anthropic/v1/messages`) accepts only the first two, since it spends real money on every call:
 
-| Token | Who it's for | How to get it |
-|---|---|---|
-| GitHub session token | People using the app | Sign in at atlas-modelling.pages.dev; the app's Supabase session `access_token` is the token |
-| Service token (`ATLAS_API_TOKEN`) | Scripts, CI, AI agents | Held by the workspace owner (Cloudflare Pages secret) |
+| Token | Who it's for | How to get it | AI proxy? |
+|---|---|---|---|
+| GitHub session token | People using the app | Sign in at atlas-modelling.pages.dev; the app's Supabase session `access_token` is the token | Yes |
+| Service token (`ATLAS_API_TOKEN`) | Scripts, CI, AI agents | Held by the workspace owner (Cloudflare Pages secret) | Yes |
+| Read-only token (`ATLAS_API_TOKEN_READONLY`) | Dashboards, reporting, anything that should never be able to write | Held by the workspace owner (Cloudflare Pages secret) | **No** — 403 |
+
+The read-only token authenticates `GET`/`HEAD` normally; any mutating method
+(`POST`/`PATCH`/`PUT`/`DELETE`) with that token gets `403 {"error": "This
+token is read-only"}` instead of running.
 
 Unauthenticated → `401 {"error": "..."}`.
+
+## Rate limiting
+
+Both the model API and the AI proxy enforce a fixed-window, per-token rate
+limit inside the Cloudflare Pages Function itself — 120 requests/minute for
+the model API, 20 requests/minute for the AI proxy by default (configurable
+via the `ATLAS_RATE_LIMIT_API` / `ATLAS_RATE_LIMIT_AI` env vars; `0` disables
+a tier). Over the limit → `429` with a `retry-after` header (seconds).
+
+This in-function limiter is **best-effort per Cloudflare point-of-presence,
+not a global guarantee** — it's counted in the memory of whichever isolate
+happens to handle a given request, and Cloudflare may run many isolates
+across many POPs simultaneously. It catches accidental floods and misbehaving
+clients cheaply; it is not a substitute for a proper cap. The real backstop
+is a **Cloudflare dashboard rate-limiting rule** in front of these routes —
+configure one (Security → WAF → Rate limiting rules) for production-grade
+enforcement that holds regardless of isolate/POP distribution.
+
+Every response — success or error — carries an `x-request-id` header; quote
+it when reporting an issue so the corresponding server-side log line can be
+found.
 
 ## The one rule that matters
 
@@ -46,7 +72,8 @@ in-app AI. That means the metamodel is enforced server-side and violations retur
 
 | Method + path | Purpose |
 |---|---|
-| `GET /workspace` | Whole workspace snapshot (meta, elements, relationships, views, states) |
+| `GET/HEAD /workspace` | Whole workspace snapshot (meta, elements, relationships, views, states). Carries `ETag`/`x-atlas-revision`; `HEAD` for headers only |
+| `POST /workspace` | Atomic bulk import — replace the whole workspace (restore a backup). `?dryRun=1` validates only |
 | `GET/POST /elements`, `GET/PATCH/DELETE /elements/{id}` | Model elements. `GET /elements?name=X` filters by exact name |
 | `GET/POST /relationships`, `GET/PATCH/DELETE /relationships/{id}` | Connections between elements |
 | `GET/POST /views`, `GET/PATCH/DELETE /views/{id}` | Diagrams (projections of the model) |
@@ -59,9 +86,48 @@ in-app AI. That means the metamodel is enforced server-side and violations retur
 | `GET /views/{id}/export` | Export a view as Mermaid, PlantUML or SVG |
 
 Convenience for humans and AI agents: creation endpoints accept `parentName`,
-`sourceName`/`targetName`, and `elementName` in place of ids — resolved against
-unique element names (`400` if missing or ambiguous). On `PATCH`, send only the
-fields to change; an explicit `null` clears an optional field.
+`sourceName`/`targetName`, and `elementName` in place of ids — resolved
+case-insensitively against existing element names. Two failure shapes:
+
+```sh
+# Zero matches
+# → 400 {"error": "No element named \"Crew Rostering\""}
+
+# More than one element shares the name
+# → 400 {"error": "Element name \"Crew Rostering\" is ambiguous"}
+```
+
+On `PATCH`, send only the fields to change; an explicit `null` clears an
+optional field.
+
+## Polling cheaply
+
+`GET /workspace` carries an `ETag: "r<revision>"` header and an
+`x-atlas-revision` header — the storage revision behind the snapshot you just
+read. Send the ETag back via `If-None-Match` on the next poll: if nothing has
+changed you get a bodyless `304` instead of the whole workspace. `HEAD
+/workspace` returns the same two headers with no body at all, for a poll loop
+that only needs to know *whether* something changed, not *what*.
+
+Every mutating endpoint (`POST`/`PATCH`/`DELETE` across elements,
+relationships, views, placements, states, `POST /commands`, `POST /workspace`)
+returns the **new** revision as `x-atlas-revision` on success — one more than
+whatever revision preceded the write. A client that keeps the last revision it
+saw can tell, from response headers alone, whether it needs to re-fetch
+anything:
+
+```sh
+# First read: note the ETag
+curl -si "${auth[@]}" $API/workspace | grep -i etag
+# < etag: "r7"
+
+# Later: ask "has anything changed since r7?"
+curl -s -o /dev/null -w '%{http_code}\n' "${auth[@]}" -H 'If-None-Match: "r7"' $API/workspace
+# 304 (nothing changed) or 200 (something did — re-fetch the body)
+
+# Cheaper still: HEAD, no body either way
+curl -sI "${auth[@]}" $API/workspace
+```
 
 ## Worked example (curl)
 
@@ -126,6 +192,41 @@ curl -s "${auth[@]}" -X PATCH $API/elements/$ID -d '{
 ```
 
 `PATCH` replaces the whole array; send `"costs": null` to clear it.
+
+## Bulk import / restore-a-backup — `POST /workspace`
+
+`GET /workspace` and `POST /workspace` are a pair: export the whole model,
+later replay that exact snapshot back in — the standard way to restore a
+backup, seed a new environment, or move a workspace between databases. The
+request body is the exact `WorkspaceData` shape `GET /workspace` returns.
+
+The write is atomic and total: on success, every element, relationship, view
+and state currently stored is replaced by what's in the body — this is an
+overwrite, not a merge. Validation happens first and is dispatch-free
+(construct the workspace, check referential integrity, validate stencil
+refs against the registry) rather than a full command-bus replay, so it stays
+fast even for a large workspace; a validation failure returns `400` and never
+touches the stored data. Add `?dryRun=1` to run validation only:
+
+```sh
+curl -s "${auth[@]}" -o /dev/null -w '%{http_code}\n' -d @snapshot.json "$API/workspace?dryRun=1"
+# 200 {"valid": true}   — or 400 {"error": "..."} without persisting anything
+```
+
+Same optimistic-revision retry as every other mutation — a concurrent writer
+racing the import just means one more attempt, not a lost update.
+
+```sh
+# 1. Back up the current workspace
+curl -s "${auth[@]}" $API/workspace > snapshot.json
+
+# 2. ...later, restore it (e.g. into a freshly provisioned workspace)
+curl -s "${auth[@]}" -X POST -d @snapshot.json $API/workspace
+```
+
+`400` causes: a dangling reference (e.g. an element's `parentId` pointing at
+nothing — `checkIntegrity`'s job), or a `stencil` ref whose `attributes` fail
+that stencil's own JSON Schema.
 
 ## Raw commands (advanced)
 
@@ -230,3 +331,9 @@ curl -s "${auth[@]}" $API/commands/schema
   `GET /elements/{id}/connections`, and `GET /views/{id}/export` before falling back
   to fetching the whole workspace and computing it yourself; validate a raw command
   batch shape against `GET /commands/schema` before `POST /commands`.
+- Polling a shared workspace for changes? Use `HEAD /workspace` (or `GET` with
+  `If-None-Match`) and compare `x-atlas-revision` instead of diffing whole
+  snapshots — see "Polling cheaply" above.
+- Restoring or seeding a workspace wholesale (as opposed to incremental
+  `create*`/`update*` calls)? `POST /workspace` is the atomic bulk-import path —
+  see "Bulk import / restore-a-backup" above.

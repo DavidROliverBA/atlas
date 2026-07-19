@@ -5,6 +5,7 @@ import {
   costEntryVisible,
   elementAnnual,
   estateTco,
+  subtreeTco,
   tcoDiff,
 } from "../src/analysis/tco.js";
 import { workspaceFromFiles, workspaceToFiles } from "../src/serialize/files.js";
@@ -281,6 +282,128 @@ describe("TCO engine", () => {
     parsedCategory.costs[0].category = "banana";
     badCategory.set(path, JSON.stringify(parsedCategory));
     expect(() => workspaceFromFiles(badCategory)).toThrow(/Schema validation/);
+  });
+
+  it("mixed-currency estates never collapse into one figure: byCurrency carries the trustworthy per-currency totals", () => {
+    const f = buildFixture();
+    const bookingCost: CostEntry = {
+      id: f.ids.next(),
+      label: "Booking support team",
+      category: "people",
+      classification: "run",
+      kind: "recurring",
+      amount: 400000,
+      currency: "GBP",
+    };
+    const webAppCost: CostEntry = {
+      id: f.ids.next(),
+      label: "US CDN",
+      category: "infrastructure",
+      classification: "run",
+      kind: "recurring",
+      amount: 12000,
+      currency: "USD",
+    };
+    const paymentsCost: CostEntry = {
+      id: f.ids.next(),
+      label: "US processor fee",
+      category: "vendor-services",
+      classification: "run",
+      kind: "recurring",
+      amount: 8000,
+      currency: "USD",
+    };
+    f.bus.dispatch({ type: "updateElement", id: f.booking.id, changes: { costs: [bookingCost] } });
+    f.bus.dispatch({ type: "updateElement", id: f.webApp.id, changes: { costs: [webAppCost] } });
+    f.bus.dispatch({ type: "updateElement", id: f.payments.id, changes: { costs: [paymentsCost] } });
+
+    const estate = estateTco(f.ws, { type: "all" }, 5);
+    expect(estate.currencies).toEqual(["GBP", "USD"]);
+    expect(estate.byCurrency["GBP"]).toEqual({ totalAnnual: 400000, totalTco: 2000000 });
+    expect(estate.byCurrency["USD"]).toEqual({ totalAnnual: 20000, totalTco: 100000 });
+    // The raw totals still sum every currency (never NaN — hostile), but the UI must not label them.
+    expect(estate.totalAnnual).toBe(420000);
+
+    // Booking Engine's row spans both currencies (its own GBP cost plus Web App's USD cost rolled up).
+    const bookingRow = estate.rows.find((r) => r.id === f.booking.id)!;
+    expect(bookingRow.currencies).toEqual(["GBP", "USD"]);
+    // Payments only ever carries USD.
+    const paymentsRow = estate.rows.find((r) => r.id === f.payments.id)!;
+    expect(paymentsRow.currencies).toEqual(["USD"]);
+  });
+
+  it("tcoDiff breaks the delta out per currency too", () => {
+    const f = buildFixture();
+    const mainframeCost: CostEntry = {
+      id: f.ids.next(),
+      label: "Mainframe run cost",
+      category: "infrastructure",
+      classification: "run",
+      kind: "recurring",
+      amount: 300000,
+      validTo: "2027-12-31",
+    };
+    f.bus.dispatch({ type: "updateElement", id: f.mainframe.id, changes: { costs: [mainframeCost] } });
+
+    const delta = tcoDiff(
+      f.ws,
+      { type: "state", stateId: f.current.id },
+      { type: "state", stateId: f.target.id },
+    );
+    expect(delta.tcoA).toBe(1500000); // 300000/yr × 5 years, state contexts don't re-evaluate per year
+    expect(delta.byCurrency["GBP"]).toEqual({
+      annualA: 300000,
+      annualB: 0,
+      annualDelta: -300000,
+      tcoA: 1500000,
+      tcoB: 0,
+      tcoDelta: -1500000,
+    });
+  });
+
+  it("subtreeTco scopes rows and totals to one element's containment subtree", () => {
+    const f = buildFixture();
+    const bookingCost: CostEntry = {
+      id: f.ids.next(),
+      label: "Booking support team",
+      category: "people",
+      classification: "run",
+      kind: "recurring",
+      amount: 400000,
+    };
+    const webAppCost: CostEntry = {
+      id: f.ids.next(),
+      label: "Web hosting",
+      category: "infrastructure",
+      classification: "run",
+      kind: "recurring",
+      amount: 1000,
+      period: "monthly",
+    };
+    const paymentsCost: CostEntry = {
+      id: f.ids.next(),
+      label: "Payments platform",
+      category: "vendor-services",
+      classification: "run",
+      kind: "recurring",
+      amount: 20000,
+    };
+    f.bus.dispatch({ type: "updateElement", id: f.booking.id, changes: { costs: [bookingCost] } });
+    f.bus.dispatch({ type: "updateElement", id: f.webApp.id, changes: { costs: [webAppCost] } });
+    // Outside the subtree: must not leak into the scoped totals or rows.
+    f.bus.dispatch({ type: "updateElement", id: f.payments.id, changes: { costs: [paymentsCost] } });
+
+    const ctx = { type: "all" } as const;
+    const scoped = subtreeTco(f.ws, f.booking.id, ctx, 5);
+
+    expect(scoped.rows.map((r) => r.id).sort()).toEqual([f.booking.id, f.webApp.id].sort());
+    expect(scoped.rows.some((r) => r.id === f.payments.id)).toBe(false);
+    expect(scoped.totalAnnual).toBe(412000); // Booking's rolled-up figure, not the whole estate's
+    expect(scoped.totalTco).toBe(412000 * 5);
+    expect(scoped.byCurrency["GBP"]).toEqual({ totalAnnual: 412000, totalTco: 412000 * 5 });
+
+    const estate = estateTco(f.ws, ctx, 5);
+    expect(scoped.totalAnnual).toBeLessThan(estate.totalAnnual);
   });
 
   it("round-trips element costs byte-identically", () => {

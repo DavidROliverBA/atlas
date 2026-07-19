@@ -9,3 +9,10 @@
 name = "atlas-modelling"
 pages_build_output_dir = "dist"
 compatibility_date = "2026-07-19"
+
+# Cloudflare Workers Logs: captures console.log/console.error output (and
+# request metadata) from the Functions below so the structured log lines
+# they emit per request are actually retained/queryable, not just printed to
+# an ephemeral `wrangler tail` session.
+[observability]
+enabled = true

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { CommandBus, Workspace, seededUlidFactory } from "@atlas/core";
+import {
+  CommandBus,
+  StencilRegistry,
+  Workspace,
+  elementAnnual,
+  estateTco,
+  seededUlidFactory,
+  type StencilPack,
+} from "@atlas/core";
 import { ChangeSetBuilder, ToolError } from "../src/changeset.js";
 import { buildModelSummary, describeElement } from "../src/summary.js";
 
@@ -14,6 +22,35 @@ function seed() {
   const view = { id: ids.next(), kind: "landscape" as const, name: "Landscape", scopeId: null, placements: [] };
   bus.dispatch({ type: "createView", view });
   return { ids, ws, bus, booking, payments, view };
+}
+
+const testStencilPack: StencilPack = {
+  formatVersion: 1,
+  id: "ai-agents",
+  name: "AI Agents",
+  version: "1.0.0",
+  categories: [{ id: "containers", name: "Containers" }],
+  stencils: [
+    {
+      id: "agent",
+      name: "Agent",
+      category: "containers",
+      elementType: "container",
+      symbol2d: "<svg/>",
+      symbolIso: "<svg/>",
+      attributeSchema: {
+        type: "object",
+        properties: { runtime: { type: "string" } },
+        additionalProperties: false,
+      },
+    },
+  ],
+};
+
+function testRegistry(): StencilRegistry {
+  const registry = new StencilRegistry();
+  registry.register(testStencilPack);
+  return registry;
 }
 
 describe("ChangeSetBuilder", () => {
@@ -231,5 +268,286 @@ describe("model summary", () => {
     const { ws } = seed();
     expect(describeElement(ws, "booking engine")).toContain("[system]");
     expect(describeElement(ws, "nope")).toBeNull();
+  });
+
+  it("lists stencil packs and per-element stencil ids", () => {
+    const { ids, ws, bus, booking, view } = seed();
+    ws.meta.stencilPacks = ["ai-agents@1"];
+    bus.dispatch({
+      type: "updateElement",
+      id: booking.id,
+      changes: { stencil: { pack: "ai-agents", stencil: "agent" } },
+    });
+    bus.dispatch({ type: "placeOnView", viewId: view.id, placement: { elementId: booking.id, x: 3, y: 4 } });
+    const summary = buildModelSummary(ws);
+    expect(summary).toContain("Stencil packs: ai-agents@1");
+    expect(summary).toContain("(system, ai-agents/agent)");
+
+    const detail = describeElement(ws, "Booking Engine")!;
+    expect(detail).toContain("stencil: ai-agents/agent");
+    expect(detail).toContain(`"${view.name}" @ (3,4)`);
+    void ids;
+  });
+});
+
+describe("ChangeSetBuilder — stencils", () => {
+  it("validates a stencil ref and its attributes at planning time", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id, testRegistry());
+
+    const agent = builder.createElement({
+      name: "Support Agent",
+      kind: "container",
+      parent: "Booking Engine",
+      stencil: { pack: "ai-agents", stencil: "agent", attributes: { runtime: "python" } },
+    });
+    expect(builder.clone.element(agent.id).stencil).toEqual({
+      pack: "ai-agents",
+      stencil: "agent",
+      attributes: { runtime: "python" },
+    });
+  });
+
+  it("rejects an unknown stencil id and invalid attributes before queuing", () => {
+    const { ids, ws, view } = seed();
+    const unknownStencil = new ChangeSetBuilder(ws, ids, view.id, testRegistry());
+    expect(() =>
+      unknownStencil.createElement({
+        name: "Bad Agent",
+        kind: "container",
+        parent: "Booking Engine",
+        stencil: { pack: "ai-agents", stencil: "nope" },
+      }),
+    ).toThrow(/Unknown stencil/);
+    expect(unknownStencil.commands).toHaveLength(0);
+
+    const badAttrs = new ChangeSetBuilder(ws, ids, view.id, testRegistry());
+    expect(() =>
+      badAttrs.createElement({
+        name: "Bad Agent 2",
+        kind: "container",
+        parent: "Booking Engine",
+        stencil: { pack: "ai-agents", stencil: "agent", attributes: { runtime: 42 } },
+      }),
+    ).toThrow();
+    expect(badAttrs.commands).toHaveLength(0);
+  });
+
+  it("clears a stencil via update with null", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id, testRegistry());
+    builder.createElement({
+      name: "Support Agent",
+      kind: "container",
+      parent: "Booking Engine",
+      stencil: { pack: "ai-agents", stencil: "agent" },
+    });
+    builder.updateElement("Support Agent", { stencil: null as never });
+    expect(builder.clone.elements.get([...builder.clone.elements.values()].find((e) => e.name === "Support Agent")!.id)?.stencil).toBeUndefined();
+  });
+});
+
+describe("ChangeSetBuilder — update_relationships", () => {
+  it("resolves by source/target, disambiguating with name, and applies changes including null-clear", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.createRelationship({ source: "Booking Engine", target: "Payments", name: "charges via", technology: ["HTTP"] });
+    builder.createRelationship({ source: "Booking Engine", target: "Payments", name: "refunds via" });
+
+    expect(() =>
+      builder.updateRelationship({ source: "Booking Engine", target: "Payments", new_name: "renamed" }),
+    ).toThrow(ToolError);
+
+    builder.updateRelationship({
+      source: "Booking Engine",
+      target: "Payments",
+      name: "charges via",
+      new_name: "authorises via",
+      color: "#ff0000",
+      technology: null,
+    });
+    const rel = [...builder.clone.relationships.values()].find((r) => r.name === "authorises via")!;
+    expect(rel.color).toBe("#ff0000");
+    expect(rel.technology).toBeUndefined();
+
+    const stillThere = [...builder.clone.relationships.values()].find((r) => r.name === "refunds via");
+    expect(stillThere).toBeTruthy();
+  });
+
+  it("errors with candidates when still ambiguous", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.createRelationship({ source: "Booking Engine", target: "Payments", name: "charges via" });
+    builder.createRelationship({ source: "Booking Engine", target: "Payments", name: "refunds via" });
+    try {
+      builder.updateRelationship({ source: "Booking Engine", target: "Payments", new_name: "x" });
+      throw new Error("expected updateRelationship to throw");
+    } catch (err) {
+      expect((err as Error).message).toContain("charges via");
+      expect((err as Error).message).toContain("refunds via");
+    }
+  });
+});
+
+describe("ChangeSetBuilder — placement geometry", () => {
+  it("places with explicit x/y/width/height and still accepts bare names", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.placeOnView([
+      { name: "Booking Engine", x: 10, y: 20, width: 12, height: 6 },
+      "Payments",
+    ]);
+    const bookingPlacement = builder.clone.view(view.id).placements.find((p) => p.elementId === builder.resolveElement("Booking Engine").id)!;
+    expect(bookingPlacement).toMatchObject({ x: 10, y: 20, width: 12, height: 6 });
+    const paymentsPlacement = builder.clone.view(view.id).placements.find((p) => p.elementId === builder.resolveElement("Payments").id)!;
+    expect(paymentsPlacement.width).toBeUndefined();
+  });
+
+  it("moves an already-placed element via move_placement", () => {
+    const { ids, ws, bus, view, booking } = seed();
+    bus.dispatch({ type: "placeOnView", viewId: view.id, placement: { elementId: booking.id, x: 0, y: 0 } });
+
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.movePlacement({ element: "Booking Engine", x: 5, y: 7, width: 9 });
+    const placement = builder.clone.view(view.id).placements.find((p) => p.elementId === booking.id)!;
+    expect(placement).toMatchObject({ x: 5, y: 7, width: 9 });
+
+    bus.dispatch(builder.toBatch("move")!);
+    expect(ws.view(view.id).placements.find((p) => p.elementId === booking.id)).toMatchObject({ x: 5, y: 7, width: 9 });
+  });
+
+  it("errors moving an element that is not on the view", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    expect(() => builder.movePlacement({ element: "Booking Engine", x: 1, y: 1 })).toThrow();
+  });
+});
+
+describe("ChangeSetBuilder — state overrides", () => {
+  it("merges overrides into an existing state entry and clears cleanly", () => {
+    const { ids, ws, bus, view, booking } = seed();
+    bus.dispatch({ type: "createState", state: { id: ids.next(), name: "Target", date: "2028-01-01" } });
+
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.setStateOverride({ element: "Booking Engine", state: "Target", overrides: { name: "Booking (legacy)" } });
+    builder.setStateOverride({ element: "Booking Engine", state: "Target", overrides: { status: "deprecated" } });
+    bus.dispatch(builder.toBatch("overrides")!);
+
+    const targetId = [...ws.states.values()].find((s) => s.name === "Target")!.id;
+    expect(ws.element(booking.id).stateOverrides?.[targetId]).toEqual({
+      name: "Booking (legacy)",
+      status: "deprecated",
+    });
+
+    const clearer = new ChangeSetBuilder(ws, ids, view.id);
+    clearer.setStateOverride({ element: "Booking Engine", state: "Target", clear: true });
+    bus.dispatch(clearer.toBatch("clear override")!);
+    expect(ws.element(booking.id).stateOverrides).toBeUndefined();
+  });
+
+  it("errors on an unknown state name", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    expect(() =>
+      builder.setStateOverride({ element: "Booking Engine", state: "Nope", overrides: { name: "x" } }),
+    ).toThrow(ToolError);
+  });
+});
+
+describe("ChangeSetBuilder — get_tco", () => {
+  it("matches core estateTco/elementAnnual for the whole estate and a single subtree", () => {
+    const { ids, ws, bus, booking, payments, view } = seed();
+    bus.dispatch({
+      type: "updateElement",
+      id: booking.id,
+      changes: {
+        costs: [
+          { id: ids.next(), label: "Hosting", category: "infrastructure", classification: "run", kind: "recurring", amount: 12000 },
+        ],
+      },
+    });
+    bus.dispatch({
+      type: "updateElement",
+      id: payments.id,
+      changes: {
+        costs: [
+          { id: ids.next(), label: "Licence", category: "licences", classification: "run", kind: "recurring", amount: 6000 },
+        ],
+      },
+    });
+
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    const report = builder.getTco({});
+    const expected = estateTco(ws, { type: "all" }, 5);
+    expect(report).toContain(`£${Math.round(expected.totalAnnual).toLocaleString("en-GB")}/yr`);
+    expect(report).toContain(`£${Math.round(expected.totalTco).toLocaleString("en-GB")}`);
+
+    const subtree = builder.getTco({ element: "Booking Engine", years: 3 });
+    const expectedSubtree = elementAnnual(ws, booking.id, { type: "all" });
+    expect(subtree).toContain(`£${Math.round(expectedSubtree.rolledUp).toLocaleString("en-GB")}/yr`);
+    expect(subtree).toContain(`£${Math.round(expectedSubtree.rolledUp * 3).toLocaleString("en-GB")}`);
+  });
+
+  it("diffs two named states", () => {
+    const { ids, ws, bus, booking, view } = seed();
+    const currentId = ids.next();
+    const targetId = ids.next();
+    bus.dispatch({ type: "createState", state: { id: currentId, name: "Current" } });
+    bus.dispatch({ type: "createState", state: { id: targetId, name: "Target" } });
+    bus.dispatch({
+      type: "updateElement",
+      id: booking.id,
+      changes: {
+        costs: [
+          {
+            id: ids.next(),
+            label: "Hosting",
+            category: "infrastructure",
+            classification: "run",
+            kind: "recurring",
+            amount: 10000,
+            states: [targetId],
+          },
+        ],
+      },
+    });
+
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    const report = builder.getTco({ compare_states: ["Current", "Target"] });
+    expect(report).toContain("Current vs Target");
+    expect(report).toContain("Delta");
+  });
+
+  it("queues nothing — read-only against the clone", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.getTco({});
+    expect(builder.commands).toHaveLength(0);
+    expect(builder.summary).toHaveLength(0);
+  });
+});
+
+describe("ChangeSetBuilder — pin_route", () => {
+  it("pins and clears a relationship's route on a view", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.createRelationship({ source: "Booking Engine", target: "Payments", name: "charges via" });
+    builder.pinRoute({ source: "Booking Engine", target: "Payments", source_port: "r1", target_port: "l1" });
+
+    const clonedView = builder.clone.view(view.id);
+    const relId = [...builder.clone.relationships.values()].find((r) => r.name === "charges via")!.id;
+    expect(clonedView.edgeAnchors?.[relId]).toEqual({ source: "r1", target: "l1" });
+
+    builder.pinRoute({ source: "Booking Engine", target: "Payments", clear: true });
+    expect(builder.clone.view(view.id).edgeAnchors?.[relId]).toBeUndefined();
+  });
+
+  it("rejects an invalid port", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.createRelationship({ source: "Booking Engine", target: "Payments" });
+    expect(() =>
+      builder.pinRoute({ source: "Booking Engine", target: "Payments", source_port: "z9", target_port: "l1" }),
+    ).toThrow(ToolError);
   });
 });

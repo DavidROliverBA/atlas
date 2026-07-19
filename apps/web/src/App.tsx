@@ -38,20 +38,40 @@ function Toast() {
   );
 }
 
+// Shown once syncDb has failed 3+ cycles in a row (see store.ts). Unlike Toast
+// this never auto-dismisses — it reflects an ongoing condition, not a single
+// event — and clears itself the moment a sync succeeds again.
+function DbOutageBanner() {
+  const dbOutage = useAtlas((s) => s.dbOutage);
+  if (!dbOutage) return null;
+  return (
+    <div
+      data-testid="db-outage-banner"
+      className="fixed left-1/2 top-0 z-50 -translate-x-1/2 rounded-b-lg bg-amber-400 px-4 py-2 text-sm font-medium text-amber-950 shadow-lg"
+    >
+      Shared database unreachable — retrying…
+    </div>
+  );
+}
+
 export default function App() {
   const undo = useAtlas((s) => s.undo);
   const redo = useAtlas((s) => s.redo);
   const overlay = useAtlas((s) => s.overlay);
   const source = useAtlas((s) => s.source);
+  const pollIntervalMs = useAtlas((s) => s.pollIntervalMs);
 
   // Database mode: poll for remote changes so other clients' edits appear.
+  // The interval backs off while syncDb is failing (see store.ts) and is
+  // restored to its fast default on the next success, so this effect must
+  // re-run whenever pollIntervalMs changes to reschedule with the new delay.
   useEffect(() => {
     if (source !== "db") return;
     const interval = setInterval(() => {
       if (!document.hidden) void useAtlas.getState().syncDb();
-    }, 8000);
+    }, pollIntervalMs);
     return () => clearInterval(interval);
-  }, [source]);
+  }, [source, pollIntervalMs]);
   const [rightTab, setRightTab] = useState<"inspector" | "chat">("inspector");
 
   useEffect(() => {
@@ -155,6 +175,7 @@ export default function App() {
         <ConnectionsView centerId={overlay.id} onClose={() => useAtlas.setState({ overlay: null })} />
       )}
       <CommandPalette />
+      <DbOutageBanner />
       <Toast />
     </div>
   );

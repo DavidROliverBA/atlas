@@ -75,6 +75,7 @@ create table if not exists views (
 create table if not exists view_placements (
   view_id text not null references views(id) on delete cascade,
   element_id text not null references elements(id) on delete cascade,
+  workspace_id uuid not null references workspaces(id) on delete cascade,
   x double precision not null,
   y double precision not null,
   width double precision,
@@ -94,6 +95,7 @@ create table if not exists states (
 create index if not exists elements_workspace on elements(workspace_id);
 create index if not exists relationships_workspace on relationships(workspace_id);
 create index if not exists views_workspace on views(workspace_id);
+create index if not exists view_placements_workspace on view_placements(workspace_id);
 create index if not exists states_workspace on states(workspace_id);
 
 -- Row Level Security: membership gates everything.
@@ -202,8 +204,8 @@ begin
     hidden_relationship_ids jsonb, edge_anchors jsonb
   );
 
-  insert into view_placements (view_id, element_id, x, y, width, height)
-  select r.view_id, r.element_id, r.x, r.y, r.width, r.height
+  insert into view_placements (view_id, element_id, workspace_id, x, y, width, height)
+  select r.view_id, r.element_id, p_workspace_id, r.x, r.y, r.width, r.height
   from jsonb_to_recordset(coalesce(p_payload->'placements', '[]'::jsonb)) as r(
     view_id text, element_id text, x double precision, y double precision,
     width double precision, height double precision

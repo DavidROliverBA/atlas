@@ -19,6 +19,7 @@ interface CallOptions {
   token?: string | null;
   body?: unknown;
   query?: Record<string, string>;
+  headers?: Record<string, string>;
 }
 
 function makeEnv() {
@@ -29,7 +30,7 @@ async function call(method: string, segments: string[], opts: CallOptions = {}):
   const url = new URL(`https://example.com/api/v1/${segments.join("/")}`);
   for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
   const token = opts.token === undefined ? TOKEN : opts.token;
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...opts.headers };
   if (token) headers.authorization = `Bearer ${token}`;
   if (opts.body !== undefined) headers["content-type"] = "application/json";
   const request = new Request(url, {
@@ -272,5 +273,158 @@ describe("routing", () => {
   it("404s an unknown route", async () => {
     const res = await call("GET", ["not-a-real-resource"]);
     expect(res.status).toBe(404);
+  });
+});
+
+describe("workspace revision headers (ETag / x-atlas-revision)", () => {
+  it("GET /workspace carries a matching ETag and x-atlas-revision", async () => {
+    const res = await call("GET", ["workspace"]);
+    expect(res.status).toBe(200);
+    const etag = res.headers.get("etag");
+    const revision = res.headers.get("x-atlas-revision");
+    expect(etag).toMatch(/^"r\d+"$/);
+    expect(etag).toBe(`"r${revision}"`);
+  });
+
+  it("304s a matching If-None-Match with no body", async () => {
+    const first = await call("GET", ["workspace"]);
+    const etag = first.headers.get("etag")!;
+
+    const res = await call("GET", ["workspace"], { headers: { "if-none-match": etag } });
+    expect(res.status).toBe(304);
+    expect(await res.text()).toBe("");
+  });
+
+  it("200s a stale If-None-Match once the workspace has moved on", async () => {
+    const first = await call("GET", ["workspace"]);
+    const staleEtag = first.headers.get("etag")!;
+
+    await createElement({ kind: "system", name: "Cache Buster" });
+
+    const res = await call("GET", ["workspace"], { headers: { "if-none-match": staleEtag } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("etag")).not.toBe(staleEtag);
+  });
+
+  it("HEAD /workspace returns the same headers as GET with no body", async () => {
+    const got = await call("GET", ["workspace"]);
+    const head = await call("HEAD", ["workspace"]);
+    expect(head.status).toBe(200);
+    expect(head.headers.get("etag")).toBe(got.headers.get("etag"));
+    expect(head.headers.get("x-atlas-revision")).toBe(got.headers.get("x-atlas-revision"));
+    expect(await head.text()).toBe("");
+  });
+
+  it("HEAD /workspace also honours If-None-Match with a bodyless 304", async () => {
+    const got = await call("GET", ["workspace"]);
+    const etag = got.headers.get("etag")!;
+    const res = await call("HEAD", ["workspace"], { headers: { "if-none-match": etag } });
+    expect(res.status).toBe(304);
+    expect(await res.text()).toBe("");
+  });
+
+  it("a mutation's x-atlas-revision is exactly one more than the prior GET revision", async () => {
+    const before = await call("GET", ["workspace"]);
+    const beforeRevision = Number(before.headers.get("x-atlas-revision"));
+
+    const created = await call("POST", ["elements"], { body: { kind: "system", name: "Revision Probe" } });
+    expect(created.status).toBe(201);
+    expect(Number(created.headers.get("x-atlas-revision"))).toBe(beforeRevision + 1);
+
+    const after = await call("GET", ["workspace"]);
+    expect(Number(after.headers.get("x-atlas-revision"))).toBe(beforeRevision + 1);
+    expect(after.headers.get("etag")).toBe(`"r${beforeRevision + 1}"`);
+  });
+
+  it("a no-op-result mutation (204) still carries x-atlas-revision", async () => {
+    const created = await createElement({ kind: "system", name: "Delete Me" });
+    const beforeDelete = await call("GET", ["workspace"]);
+    const beforeRevision = Number(beforeDelete.headers.get("x-atlas-revision"));
+
+    const deleted = await call("DELETE", ["elements", created.id as string]);
+    expect(deleted.status).toBe(204);
+    expect(Number(deleted.headers.get("x-atlas-revision"))).toBe(beforeRevision + 1);
+  });
+});
+
+describe("POST /workspace (atomic bulk import / restore)", () => {
+  it("happy path: replaces the workspace directly from its own export, GET matches", async () => {
+    await createElement({ kind: "system", name: "Import Source" });
+    const view = await call("POST", ["views"], { body: { kind: "landscape", name: "Import View" } });
+    expect(view.status).toBe(201);
+
+    const exported = await call("GET", ["workspace"]);
+    expect(exported.status).toBe(200);
+    const snapshot = await exported.json();
+
+    // No wipe: POST /workspace replaces atomically in one call.
+    const replaced = await call("POST", ["workspace"], { body: snapshot });
+    expect(replaced.status).toBe(200);
+    expect(replaced.headers.get("x-atlas-revision")).not.toBeNull();
+    expect(await replaced.json()).toEqual(snapshot);
+
+    const after = await call("GET", ["workspace"]);
+    expect(await after.json()).toEqual(snapshot);
+  });
+
+  it("dryRun=1 validates without persisting", async () => {
+    const before = await call("GET", ["workspace"]);
+    const snapshot = await before.json();
+    const beforeRevision = before.headers.get("x-atlas-revision");
+
+    const res = await call("POST", ["workspace"], { body: snapshot, query: { dryRun: "1" } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ valid: true });
+
+    const after = await call("GET", ["workspace"]);
+    expect(after.headers.get("x-atlas-revision")).toBe(beforeRevision);
+  });
+
+  it("400s a dangling parentId (integrity violation), workspace untouched", async () => {
+    const before = await call("GET", ["workspace"]);
+    const beforeRevision = before.headers.get("x-atlas-revision");
+
+    const res = await call("POST", ["workspace"], {
+      body: {
+        meta: { formatVersion: 1, name: "Bad Import" },
+        elements: [
+          { id: "01BADPARENTAAAAAAAAAAAAAAA", kind: "system", name: "Orphan", parentId: "01MISSINGPARENTAAAAAAAAAA" },
+        ],
+        relationships: [],
+        views: [],
+        states: [],
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error.toLowerCase()).toContain("unknown parent");
+
+    const after = await call("GET", ["workspace"]);
+    expect(after.headers.get("x-atlas-revision")).toBe(beforeRevision);
+  });
+
+  it("400s a stencil ref with attributes outside the pack schema", async () => {
+    const res = await call("POST", ["workspace"], {
+      body: {
+        meta: { formatVersion: 1, name: "Bad Stencil Import" },
+        elements: [
+          { id: "01SYSHOSTAAAAAAAAAAAAAAAAA", kind: "system", name: "Host", parentId: null },
+          { id: "01CONTAINERAAAAAAAAAAAAAAA", kind: "container", name: "Container", parentId: "01SYSHOSTAAAAAAAAAAAAAAAAA" },
+          {
+            id: "01COMPONENTAAAAAAAAAAAAAAA",
+            kind: "component",
+            name: "Bad Stencil",
+            parentId: "01CONTAINERAAAAAAAAAAAAAAA",
+            stencil: { pack: "aws", stencil: "ec2", attributes: { notAField: true } },
+          },
+        ],
+        relationships: [],
+        views: [],
+        states: [],
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("additional properties");
   });
 });

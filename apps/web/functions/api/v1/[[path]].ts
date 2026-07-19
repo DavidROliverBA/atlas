@@ -14,6 +14,8 @@
 import {
   CommandBus,
   Workspace,
+  checkIntegrity,
+  WorkspaceLoadError,
   ulidFactory,
   egoNetwork,
   lintWorkspace,
@@ -28,22 +30,34 @@ import {
   type NamedState,
   type Ulid,
   type View,
+  type WorkspaceData,
 } from "@atlas/core";
 import { builtinRegistry } from "@atlas/stencils";
 import { RevisionConflictError, SupabaseStorageAdapter } from "@atlas/storage-supabase";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { openapiSpec, commandSchemas } from "./openapi-spec";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../config";
+import { checkRateLimit, hashToken, rateLimitFromEnv } from "../ratelimit";
 
 export const DEFAULT_WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 
 const stencilRegistry = builtinRegistry();
 
+/** HTTP methods that change stored state — everything else is safe for the read-only token. */
+const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+/** Requests/minute for the model API when env doesn't override it — see `../ratelimit.ts`. */
+const DEFAULT_API_RATE_LIMIT = 120;
+
 interface Env {
   ATLAS_API_TOKEN?: string;
+  /** Presenting this token grants GET/HEAD only — any mutating method gets 403. */
+  ATLAS_API_TOKEN_READONLY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   /** Comma-separated GitHub usernames allowed to write. Unset = any signed-in user. */
   ATLAS_ALLOWED_GITHUB?: string;
+  /** Requests/minute per token before this API returns 429. `"0"` disables. Default 120. */
+  ATLAS_RATE_LIMIT_API?: string;
 }
 
 interface Ctx {
@@ -52,20 +66,37 @@ interface Ctx {
   params: { path?: string[] };
 }
 
-const json = (status: number, body: unknown): Response =>
+const jsonBase = (status: number, body: unknown, extraHeaders: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(body, null, 2), {
     status,
-    headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+    headers: { "content-type": "application/json", "access-control-allow-origin": "*", ...extraHeaders },
   });
 
-const err = (status: number, message: string): Response => json(status, { error: message });
+/** Token presented in `x-api-key` or `Authorization: Bearer <token>` — empty string if neither is set. */
+const extractToken = (request: Request): string =>
+  request.headers.get("x-api-key") ??
+  (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
 
-async function authorised(request: Request, env: Env): Promise<{ ok: boolean; status: number; message?: string }> {
-  const token =
-    request.headers.get("x-api-key") ??
-    (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+/** Strong validator for a workspace snapshot at a given storage revision. */
+const etagFor = (revision: number): string => `"r${revision}"`;
+
+/** True if the client's `If-None-Match` already matches this revision's ETag. */
+const isNotModified = (request: Request, etag: string): boolean => {
+  const header = request.headers.get("if-none-match");
+  if (!header) return false;
+  return header === "*" || header.split(",").some((candidate) => candidate.trim() === etag);
+};
+
+async function authorised(
+  request: Request,
+  env: Env,
+): Promise<{ ok: boolean; status: number; message?: string; readOnly?: boolean }> {
+  const token = extractToken(request);
   if (!token) return { ok: false, status: 401, message: "Missing token" };
   if (env.ATLAS_API_TOKEN && token === env.ATLAS_API_TOKEN) return { ok: true, status: 200 };
+  if (env.ATLAS_API_TOKEN_READONLY && token === env.ATLAS_API_TOKEN_READONLY) {
+    return { ok: true, status: 200, readOnly: true };
+  }
 
   const who = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
     headers: { apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${token}` },
@@ -102,6 +133,15 @@ async function loadWorkspace(adapter: SupabaseStorageAdapter, db: SupabaseClient
   return adapter.load();
 }
 
+/** Load the workspace plus its storage revision, creating the default row on first use. */
+async function loadWorkspaceWithRevision(
+  adapter: SupabaseStorageAdapter,
+  db: SupabaseClient,
+): Promise<{ workspace: Workspace; revision: number }> {
+  await ensureWorkspaceRow(db);
+  return adapter.loadWithRevision();
+}
+
 /**
  * Test-only injection seam: the contract-test suite swaps this in to run the
  * router against an in-memory fake instead of the network. Production code
@@ -133,20 +173,73 @@ type Mutator = (ws: Workspace, bus: CommandBus, nextId: () => Ulid) => unknown;
 const withCostIds = (costs: CostEntry[], nextId: () => Ulid): CostEntry[] =>
   costs.map((c) => (c.id ? c : { ...c, id: nextId() }));
 
+/**
+ * Public entry point: assigns a request id, times the request, and always
+ * emits exactly one structured completion log line — success, client error,
+ * or the catch-all 500 — before returning. The actual routing lives in
+ * `handleRequest` below; this wrapper's `finally` is what guarantees the log
+ * line fires on every return path, including ones that throw past
+ * `handleRequest`'s own try/catch.
+ */
 export async function onRequest(context: Ctx): Promise<Response> {
+  const reqId = crypto.randomUUID();
+  const start = Date.now();
+  const path = context.params.path ?? [];
+  const method = context.request.method.toUpperCase();
+  let status = 500;
+  try {
+    const response = await handleRequest(context, reqId);
+    status = response.status;
+    return response;
+  } finally {
+    const ms = Date.now() - start;
+    console.log(JSON.stringify({ reqId, method, path: path.join("/"), status, ms }));
+  }
+}
+
+async function handleRequest(context: Ctx, reqId: string): Promise<Response> {
   const { request, env } = context;
   const path = context.params.path ?? [];
   const method = request.method.toUpperCase();
 
+  // Every response from here on carries the request id, so a client (or a
+  // support conversation) can correlate a response with the server-side log
+  // line `onRequest` just emitted for it.
+  const json = (status: number, body: unknown, extraHeaders: Record<string, string> = {}): Response =>
+    jsonBase(status, body, { "x-request-id": reqId, ...extraHeaders });
+  const err = (status: number, message: string): Response => json(status, { error: message });
+  const reqHeaders = (extra: Record<string, string> = {}): Record<string, string> => ({
+    "x-request-id": reqId,
+    ...extra,
+  });
+
   if (method === "OPTIONS") {
     return new Response(null, {
       status: 204,
-      headers: {
+      headers: reqHeaders({
         "access-control-allow-origin": "*",
-        "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
+        "access-control-allow-methods": "GET, HEAD, POST, PATCH, DELETE, OPTIONS",
         "access-control-allow-headers": "*",
-      },
+      }),
     });
+  }
+
+  // Best-effort in-isolate rate limit, keyed by a hash of the caller's token
+  // (or a shared "anonymous" bucket when none is presented) — see
+  // `../ratelimit.ts` for why this is a per-POP dampener, not a global cap.
+  // The real backstop is a Cloudflare dashboard rate-limiting rule; see
+  // docs/api.md.
+  const tokenForRateLimit = extractToken(request) || "anonymous";
+  const rateLimit = checkRateLimit(
+    `api:${await hashToken(tokenForRateLimit)}`,
+    rateLimitFromEnv(env.ATLAS_RATE_LIMIT_API, DEFAULT_API_RATE_LIMIT),
+  );
+  if (rateLimit.limited) {
+    return json(
+      429,
+      { error: "Rate limit exceeded — try again shortly" },
+      { "retry-after": String(rateLimit.retryAfterSeconds) },
+    );
   }
 
   // Public: the machine-readable contract.
@@ -154,6 +247,9 @@ export async function onRequest(context: Ctx): Promise<Response> {
 
   const auth = await authorised(request, env);
   if (!auth.ok) return err(auth.status, auth.message ?? "Unauthorised");
+  if (auth.readOnly && MUTATING_METHODS.has(method)) {
+    return err(403, "This token is read-only");
+  }
   if (!env.SUPABASE_SERVICE_ROLE_KEY) {
     return err(503, "API not configured: SUPABASE_SERVICE_ROLE_KEY secret is unset");
   }
@@ -171,7 +267,7 @@ export async function onRequest(context: Ctx): Promise<Response> {
    * against fresh state (up to 3 attempts) — commands are revalidated each
    * time, so retries stay correct. 400s carry the validation message.
    */
-  const mutate = async (fn: Mutator): Promise<Response> => {
+  const mutate = async (fn: Mutator, opts: { successStatus?: number } = {}): Promise<Response> => {
     for (let attempt = 0; attempt < 6; attempt++) {
       if (attempt > 0) {
         // Jittered backoff so a burst of writers spreads out instead of
@@ -196,11 +292,19 @@ export async function onRequest(context: Ctx): Promise<Response> {
         if (e instanceof RevisionConflictError) continue;
         throw e;
       }
+      // The save above succeeded with expectedRevision === revision, and
+      // atlas_save_workspace always increments by exactly one per successful
+      // call (see packages/storage-supabase/schema.sql) — so the new
+      // revision is knowable here without an extra round-trip.
+      const revisionHeaders = { "x-atlas-revision": String(revision + 1) };
       if (result === undefined) {
         // 204 responses must not carry a body.
-        return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+        return new Response(null, {
+          status: 204,
+          headers: reqHeaders({ "access-control-allow-origin": "*", ...revisionHeaders }),
+        });
       }
-      return json(method === "POST" ? 201 : 200, result);
+      return json(opts.successStatus ?? (method === "POST" ? 201 : 200), result, revisionHeaders);
     }
     return err(409, "Workspace is being modified concurrently — try again");
   };
@@ -221,9 +325,74 @@ export async function onRequest(context: Ctx): Promise<Response> {
     const [resource, id, sub, subId] = path;
 
     // ---- workspace ------------------------------------------------------
-    if ((resource === undefined || resource === "workspace") && method === "GET") {
-      const ws = await loadWorkspace(adapter, db);
-      return json(200, ws.toData());
+    // GET/HEAD carry an ETag (`"r<revision>"`) and `x-atlas-revision` for
+    // cheap polling: a client that already has the current revision sends
+    // `If-None-Match` and gets a bodyless 304 back instead of the whole
+    // snapshot.
+    if ((resource === undefined || resource === "workspace") && (method === "GET" || method === "HEAD")) {
+      const { workspace: ws, revision } = await loadWorkspaceWithRevision(adapter, db);
+      const etag = etagFor(revision);
+      const headers = reqHeaders({
+        "access-control-allow-origin": "*",
+        etag,
+        "x-atlas-revision": String(revision),
+      });
+      if (isNotModified(request, etag)) {
+        return new Response(null, { status: 304, headers });
+      }
+      if (method === "HEAD") {
+        return new Response(null, { status: 200, headers: { ...headers, "content-type": "application/json" } });
+      }
+      return json(200, ws.toData(), headers);
+    }
+
+    // POST /workspace: atomic bulk import/restore — replace the entire
+    // stored workspace with the given snapshot (the exact shape GET
+    // /workspace returns). Validation is dispatch-free: construct + check
+    // integrity + re-validate stencil refs, same checks the command bus
+    // would eventually hit, without replaying every command.
+    if ((resource === undefined || resource === "workspace") && method === "POST") {
+      const data = await body<WorkspaceData>();
+      let imported: Workspace;
+      try {
+        imported = Workspace.fromData(data);
+        checkIntegrity(imported);
+        const stencilIssues: string[] = [];
+        for (const el of imported.elements.values()) {
+          if (!el.stencil) continue;
+          for (const issue of stencilRegistry.validateRef(el.stencil)) {
+            stencilIssues.push(`Element "${el.name}": ${issue}`);
+          }
+        }
+        if (stencilIssues.length) throw new Error(stencilIssues.join("; "));
+      } catch (e) {
+        // checkIntegrity's WorkspaceLoadError carries the actual per-object
+        // problems in `.issues` — its own `.message` is just a count.
+        if (e instanceof WorkspaceLoadError && e.issues.length) {
+          return err(400, `${e.message}: ${e.issues.join("; ")}`);
+        }
+        return err(400, e instanceof Error ? e.message : String(e));
+      }
+
+      if (new URL(request.url).searchParams.get("dryRun") === "1") {
+        return json(200, { valid: true });
+      }
+
+      return mutate(
+        (ws) => {
+          ws.meta = imported.meta;
+          ws.elements.clear();
+          for (const [elId, el] of imported.elements) ws.elements.set(elId, el);
+          ws.relationships.clear();
+          for (const [relId, r] of imported.relationships) ws.relationships.set(relId, r);
+          ws.views.clear();
+          for (const [viewId, v] of imported.views) ws.views.set(viewId, v);
+          ws.states.clear();
+          for (const [stateId, s] of imported.states) ws.states.set(stateId, s);
+          return ws.toData();
+        },
+        { successStatus: 200 },
+      );
     }
 
     // ---- lint (read-side analysis) --------------------------------------
@@ -356,7 +525,7 @@ export async function onRequest(context: Ctx): Promise<Response> {
         const ws = await loadWorkspace(adapter, db);
         if (!ws.views.has(id)) return err(404, `No view ${id}`);
         const format = new URL(request.url).searchParams.get("format");
-        const headers = { "access-control-allow-origin": "*" };
+        const headers = reqHeaders({ "access-control-allow-origin": "*" });
         if (format === "mermaid") {
           return new Response(toMermaidC4(ws, id), { status: 200, headers: { ...headers, "content-type": "text/plain; charset=utf-8" } });
         }
@@ -483,6 +652,11 @@ export async function onRequest(context: Ctx): Promise<Response> {
 
     return err(404, `No route for ${method} /api/v1/${path.join("/")}`);
   } catch (e) {
-    return err(500, e instanceof Error ? e.message : String(e));
+    // Full detail (message + stack) is server-side only — the client gets a
+    // generic message plus the request id to quote back if they report it.
+    // (400s elsewhere are deliberately verbatim: those are intentional,
+    // client-facing validation messages, not internal failures.)
+    console.error(JSON.stringify({ reqId, error: e instanceof Error ? e.message : String(e), stack: e instanceof Error ? e.stack : undefined }));
+    return err(500, `Internal error — quote request id ${reqId} if you report this`);
   }
 }

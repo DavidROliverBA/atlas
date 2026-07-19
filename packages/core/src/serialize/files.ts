@@ -130,7 +130,7 @@ function normaliseView(v: View): View {
 }
 
 function normaliseState(s: NamedState): NamedState {
-  return { id: s.id, name: s.name, date: s.date, description: s.description || undefined };
+  return { id: s.id, name: s.name, date: s.date, order: s.order, description: s.description || undefined };
 }
 
 /** Serialise a workspace to its canonical file map, sorted by path. */

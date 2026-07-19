@@ -1,0 +1,70 @@
+name: Nightly backup
+
+# Snapshots the production workspace and commits it to the `backups` branch.
+# Restore path: POST the same JSON to /api/v1/workspace (see docs/operations.md).
+
+on:
+  schedule:
+    # 03:17 UTC — off the top-of-hour to avoid the GitHub Actions cron pile-up.
+    - cron: "17 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    env:
+      ATLAS_BACKUP_TOKEN: ${{ secrets.ATLAS_BACKUP_TOKEN }}
+    steps:
+      - name: Check backup credentials
+        id: creds
+        run: |
+          if [ -n "$ATLAS_BACKUP_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ATLAS_BACKUP_TOKEN secret not set — skipping nightly backup (add it in repo settings to enable)"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.present == 'true'
+
+      - name: Fetch production workspace snapshot
+        if: steps.creds.outputs.present == 'true'
+        run: |
+          curl -sSf \
+            -H "Authorization: Bearer ${ATLAS_BACKUP_TOKEN}" \
+            https://atlas-modelling.pages.dev/api/v1/workspace \
+            -o workspace-snapshot.json
+
+      - name: Commit snapshot to the backups branch
+        if: steps.creds.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "atlas-backup-bot"
+          git config user.email "actions@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin backups > /dev/null 2>&1; then
+            git fetch origin backups:backups
+            git checkout backups
+          else
+            git checkout --orphan backups
+            git rm -rf . > /dev/null 2>&1 || true
+          fi
+
+          # workspace-snapshot.json is untracked in the working tree at this
+          # point (created before the branch switch), so it survives the
+          # checkout above regardless of which branch (or orphan root) it
+          # lands on.
+          cp workspace-snapshot.json workspace.json
+          git add workspace.json
+
+          if git diff --cached --quiet; then
+            echo "::notice::Production workspace unchanged since the last backup — nothing to commit"
+            exit 0
+          fi
+
+          git commit -m "Backup: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin backups

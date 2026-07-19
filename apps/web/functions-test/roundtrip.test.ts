@@ -385,4 +385,31 @@ describe("API export → import round-trip", () => {
     const filesFromDirectBus = workspaceToFiles(wsDirect);
     expect(Object.fromEntries(filesFromApi)).toEqual(Object.fromEntries(filesFromDirectBus));
   });
+
+  it("POST /workspace reconstructs a maximum-fidelity workspace from its own export, byte-for-byte", async () => {
+    // Same fixture and oracles as the command-batch round-trip above, but
+    // exercising the dedicated bulk-import endpoint's dispatch-free path
+    // (Workspace.fromData + checkIntegrity + stencil-ref validation) instead
+    // of replaying create* commands one at a time.
+    const target = buildTargetData(3);
+    await postCommands(snapshotToCommands(target));
+    const snapshotA = await getWorkspace();
+
+    // Direct replace — no wipe first; POST /workspace is an atomic overwrite.
+    const replaced = await call("POST", ["workspace"], { body: snapshotA });
+    expect(replaced.status).toBe(200);
+    const snapshotB = (await replaced.json()) as WorkspaceData;
+
+    // Oracle #1: plain deep-equality.
+    expect(snapshotB).toEqual(snapshotA);
+
+    // Oracle #2 (strongest): byte-identical canonical file maps.
+    const filesA = workspaceToFiles(Workspace.fromData(snapshotA));
+    const filesB = workspaceToFiles(Workspace.fromData(snapshotB));
+    expect(Object.fromEntries(filesB)).toEqual(Object.fromEntries(filesA));
+
+    // GET /workspace afterwards agrees too.
+    const snapshotC = await getWorkspace();
+    expect(snapshotC).toEqual(snapshotA);
+  });
 });

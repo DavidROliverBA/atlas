@@ -45,7 +45,14 @@ type ViewResult = {
   score: number;
 };
 
-type PaletteResult = ElementResult | ViewResult;
+type RelationshipResult = {
+  type: "relationship";
+  id: Ulid;
+  label: string;
+  score: number;
+};
+
+type PaletteResult = ElementResult | ViewResult | RelationshipResult;
 
 /**
  * Substring matches score highest (earlier position and tighter length win);
@@ -76,6 +83,27 @@ function bestScore(query: string, fields: string[]): number | null {
     if (s !== null && (best === null || s > best)) best = s;
   }
   return best;
+}
+
+/**
+ * Three priority tiers, checked in order: name-ish fields (name, kind/view
+ * label, breadcrumb/scope), then tags/technology/stencil fields, then long
+ * documentation/description text. The first tier that matches wins — a weak
+ * name match still outranks a strong doc-text match — via fixed offsets
+ * large enough that no in-tier `scoreField`/`bestScore` value can cross into
+ * the next tier up.
+ */
+const NAME_TIER = 300_000;
+const TAG_TIER = 200_000;
+const DOC_TIER = 100_000;
+const TIER_OFFSETS = [NAME_TIER, TAG_TIER, DOC_TIER];
+
+function tieredScore(query: string, tiers: string[][]): number | null {
+  for (let i = 0; i < tiers.length; i++) {
+    const s = bestScore(query, tiers[i]!);
+    if (s !== null) return TIER_OFFSETS[i]! + s;
+  }
+  return null;
 }
 
 export function CommandPalette() {
@@ -122,6 +150,12 @@ export function CommandPalette() {
       scopeName,
       score,
     });
+    const relationshipResult = (id: Ulid, label: string, score: number): RelationshipResult => ({
+      type: "relationship",
+      id,
+      label,
+      score,
+    });
 
     if (!q) {
       // No query: views first, then top-level elements, both alphabetical.
@@ -138,7 +172,9 @@ export function CommandPalette() {
     const scored: PaletteResult[] = [];
     for (const v of ws.views.values()) {
       const scopeName = v.scopeId ? (ws.elements.get(v.scopeId)?.name ?? "") : "";
-      const score = bestScore(q, [v.name, VIEW_KIND_LABELS[v.kind], scopeName]);
+      // Views only ever carry name-ish fields, so they compete in the same
+      // top tier elements' names do (unchanged relative ordering).
+      const score = tieredScore(q, [[v.name, VIEW_KIND_LABELS[v.kind], scopeName]]);
       if (score !== null) scored.push(viewResult(v.id, v.kind, v.name, scopeName, score));
     }
     for (const e of ws.elements.values()) {
@@ -147,8 +183,32 @@ export function CommandPalette() {
         .reverse()
         .map((a) => a.name)
         .join(" / ");
-      const score = bestScore(q, [e.name, KIND_LABELS[e.kind], breadcrumb]);
+      // Stencil id + string-valued attributes (e.g. autonomy: "full-auto")
+      // so pack-specific vocabulary is searchable without a schema import.
+      const stencilFields: string[] = [];
+      if (e.stencil) {
+        stencilFields.push(e.stencil.stencil);
+        for (const value of Object.values(e.stencil.attributes ?? {})) {
+          if (typeof value === "string") stencilFields.push(value);
+        }
+      }
+      const score = tieredScore(q, [
+        [e.name, KIND_LABELS[e.kind], breadcrumb],
+        [...(e.tags ?? []), ...(e.technology ?? []), ...stencilFields],
+        [e.documentation ?? "", e.description ?? ""],
+      ]);
       if (score !== null) scored.push(elementResult(e.id, e.kind, e.name, breadcrumb, score));
+    }
+    for (const r of ws.relationships.values()) {
+      const source = ws.elements.get(r.sourceId);
+      const target = ws.elements.get(r.targetId);
+      if (!source || !target) continue;
+      const label = `${source.name} → ${target.name}${r.name ? ` (${r.name})` : ""}`;
+      const score = tieredScore(q, [
+        [r.name ?? "", source.name, target.name],
+        [...(r.tags ?? []), ...(r.technology ?? [])],
+      ]);
+      if (score !== null) scored.push(relationshipResult(r.id, label, score));
     }
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, MAX_RESULTS);
@@ -171,6 +231,10 @@ export function CommandPalette() {
   const runResult = (result: PaletteResult) => {
     if (result.type === "view") {
       setActiveView(result.id);
+    } else if (result.type === "relationship") {
+      // No place action for relationships — just select (highlights the
+      // edge, same as clicking it on canvas — see Canvas.tsx's onEdgeClick).
+      select({ type: "relationship", id: result.id });
     } else {
       // Selecting always happens; the store exposes no canvas centring API to
       // pan/zoom to the node even when it is on the active view, so selection
@@ -257,6 +321,24 @@ export function CommandPalette() {
                     {result.name}
                     {result.scopeName && <span className="ml-1.5 text-xs text-slate-400">of {result.scopeName}</span>}
                   </span>
+                </div>
+              );
+            }
+
+            if (result.type === "relationship") {
+              return (
+                <div
+                  key={key}
+                  data-testid="cmdk-result"
+                  data-index={i}
+                  onMouseEnter={() => setActiveIndex(i)}
+                  onClick={() => runResult(result)}
+                  className={rowClass}
+                >
+                  <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500">
+                    Relationship
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{result.label}</span>
                 </div>
               );
             }

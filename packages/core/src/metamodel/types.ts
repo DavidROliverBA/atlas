@@ -191,6 +191,8 @@ export interface NamedState {
   name: string;
   /** Optional date anchor; undated states are purely logical. */
   date?: IsoDate;
+  /** Explicit display/comparison order; lower sorts first. States without one sort after those with. */
+  order?: number;
   description?: string;
 }
 

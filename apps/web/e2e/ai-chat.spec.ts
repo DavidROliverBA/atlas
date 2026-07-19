@@ -70,6 +70,78 @@ const CORS_HEADERS = {
 };
 
 /**
+ * The chat turn now streams via `client.messages.stream(...)` (SSE), so the
+ * stub must speak the wire format instead of returning one JSON blob: a
+ * `message_start`, per-content-block start/delta/stop triples (text_delta
+ * for text, a single input_json_delta chunk for tool_use), then
+ * `message_delta` (stop_reason/usage) and `message_stop`. The SDK's stream
+ * accumulator reconstructs the same `Message` shape the old non-streaming
+ * stub returned directly, so the fixtures above are unchanged — only the
+ * wire encoding differs.
+ */
+interface FixtureContentBlock {
+  type: string;
+  text?: string;
+  id?: string;
+  name?: string;
+  input?: unknown;
+}
+interface FixtureMessage {
+  id: string;
+  type: string;
+  role: string;
+  model: string;
+  stop_reason: string;
+  stop_sequence: null;
+  usage: { input_tokens: number; output_tokens: number };
+  content: FixtureContentBlock[];
+}
+
+function sseEvent(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function toSSE(message: FixtureMessage): string {
+  let body = sseEvent("message_start", {
+    type: "message_start",
+    message: { ...message, content: [], stop_reason: null, stop_sequence: null },
+  });
+  message.content.forEach((block, index) => {
+    if (block.type === "text") {
+      body += sseEvent("content_block_start", {
+        type: "content_block_start",
+        index,
+        content_block: { type: "text", text: "" },
+      });
+      body += sseEvent("content_block_delta", {
+        type: "content_block_delta",
+        index,
+        delta: { type: "text_delta", text: block.text ?? "" },
+      });
+    } else if (block.type === "tool_use") {
+      body += sseEvent("content_block_start", {
+        type: "content_block_start",
+        index,
+        content_block: { type: "tool_use", id: block.id, name: block.name, input: {} },
+      });
+      body += sseEvent("content_block_delta", {
+        type: "content_block_delta",
+        index,
+        delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input ?? {}) },
+      });
+    }
+    body += sseEvent("content_block_stop", { type: "content_block_stop", index });
+  });
+  body += sseEvent("message_delta", {
+    type: "message_delta",
+    delta: { stop_reason: message.stop_reason, stop_sequence: message.stop_sequence },
+    usage: { output_tokens: message.usage.output_tokens },
+  });
+  body += sseEvent("message_stop", { type: "message_stop" });
+  return body;
+}
+
+/**
  * `delete_elements` cascades (children, their relationships, every view
  * placement) — see ChangeSetBuilder.deleteElements. "Booking Engine" has 3
  * container children and touches 6 distinct relationships once its
@@ -94,7 +166,10 @@ const DELETE_RESPONSE = {
   ],
 };
 
-async function stubAnthropic(page: Page, first: unknown = TOOL_USE_RESPONSE): Promise<{ requests: unknown[] }> {
+async function stubAnthropic(
+  page: Page,
+  first: FixtureMessage = TOOL_USE_RESPONSE,
+): Promise<{ requests: unknown[] }> {
   const state = { calls: 0, requests: [] as unknown[] };
   await page.route("https://api.anthropic.com/**", async (route: Route) => {
     if (route.request().method() === "OPTIONS") {
@@ -105,8 +180,8 @@ async function stubAnthropic(page: Page, first: unknown = TOOL_USE_RESPONSE): Pr
     state.calls += 1;
     await route.fulfill({
       status: 200,
-      headers: { ...CORS_HEADERS, "content-type": "application/json" },
-      body: JSON.stringify(state.calls === 1 ? first : FINAL_RESPONSE),
+      headers: { ...CORS_HEADERS, "content-type": "text/event-stream; charset=utf-8" },
+      body: toSSE(state.calls === 1 ? first : FINAL_RESPONSE),
     });
   });
   return state;

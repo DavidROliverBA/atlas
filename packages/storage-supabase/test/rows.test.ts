@@ -98,6 +98,15 @@ describe("workspace ↔ rows mapping", () => {
     expect(rows.views[0]?.render_mode).toBe("isometric");
   });
 
+  it("stamps every placement row with the owning workspace id (so loads can be scoped per-workspace)", () => {
+    const ws = buildWorkspace();
+    const rows = dataToRows(ws.toData(), WORKSPACE_ID);
+    expect(rows.placements).toHaveLength(1);
+    for (const placement of rows.placements) {
+      expect(placement.workspace_id).toBe(WORKSPACE_ID);
+    }
+  });
+
   it("keeps jsonb columns null when the model omits them", () => {
     const ws = buildWorkspace();
     const rows = dataToRows(ws.toData(), WORKSPACE_ID);

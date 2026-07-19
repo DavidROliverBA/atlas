@@ -4,11 +4,32 @@
  */
 
 import { useMemo, useState } from "react";
-import { dependencyMatrix, downstreamOf, estateTco, lintWorkspace, type TcoRow, type Ulid } from "@atlas/core";
+import {
+  dependencyMatrix,
+  downstreamOf,
+  estateTco,
+  lintWorkspace,
+  subtreeTco,
+  type EstateTco,
+  type LintIssue,
+  type LintSeverity,
+  type TcoRow,
+  type Ulid,
+} from "@atlas/core";
 import { motion } from "framer-motion";
 import { useAtlas } from "../store";
 
 const TCO_YEAR_OPTIONS = [1, 3, 5, 10] as const;
+
+/** Errors first, then warnings, then info; stable within each group. */
+const SEVERITY_RANK: Record<LintSeverity, number> = { error: 0, warning: 1, info: 2 };
+
+/** Severity-coloured chip classes, matched to the app's existing red/amber/slate vocabulary. */
+const SEVERITY_CLASSES: Record<LintSeverity, string> = {
+  error: "border-red-300 bg-red-50 text-red-800 hover:bg-red-100",
+  warning: "border-orange-200 bg-orange-50 text-orange-800 hover:bg-orange-100",
+  info: "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100",
+};
 
 /** Currency-formatted money, en-GB conventions (§CLAUDE.md default currency is GBP). */
 function formatMoney(amount: number, currency: string): string {
@@ -39,6 +60,18 @@ function downloadTcoCsv(rows: TcoRow[], years: number): void {
   URL.revokeObjectURL(url);
 }
 
+/** One totals line per currency, e.g. "£1,200,000/yr + $340,000/yr" — never a meaningless mixed sum. */
+function formatTotalsByCurrency(tco: EstateTco, suffix: string): string {
+  return tco.currencies
+    .map((c) => `${formatMoney(suffix === "/yr" ? tco.byCurrency[c]!.totalAnnual : tco.byCurrency[c]!.totalTco, c)}${suffix}`)
+    .join(" + ");
+}
+
+/** Stable key identifying a lint issue across renders, for the click-to-cycle-ids behaviour. */
+function issueKey(issue: LintIssue): string {
+  return `${issue.code}:${issue.ids.join(",")}`;
+}
+
 export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
   const ws = useAtlas((s) => s.ws);
   useAtlas((s) => s.rev);
@@ -47,8 +80,13 @@ export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
   const costOverlay = useAtlas((s) => s.costOverlay);
   const [impactRoot, setImpactRoot] = useState<Ulid | "">("");
   const [tcoYears, setTcoYears] = useState<number>(5);
+  const [tcoScope, setTcoScope] = useState<Ulid | "">("");
+  const [issueCycle, setIssueCycle] = useState<Record<string, number>>({});
 
-  const issues = useMemo(() => lintWorkspace(ws), [ws]);
+  const issues = useMemo(
+    () => [...lintWorkspace(ws)].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]),
+    [ws],
+  );
   const matrix = useMemo(() => {
     const systems = [...ws.elements.values()]
       .filter((e) => e.parentId === null && e.kind !== "group")
@@ -68,9 +106,34 @@ export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
 
   // TCO (§TCO plan Phase 3): same "current temporal context, fall back to all time"
   // convention as the rest of this drawer's sections (they read straight off the store).
-  const tco = useMemo(() => estateTco(ws, temporal, tcoYears), [ws, temporal, tcoYears]);
+  const estateTcoResult = useMemo(() => estateTco(ws, temporal, tcoYears), [ws, temporal, tcoYears]);
+
+  // Systems/containers worth offering as a scope: they have a positive rolled-up cost.
+  const scopeOptions = useMemo(
+    () =>
+      estateTcoResult.rows.filter(
+        (r) => (r.kind === "system" || r.kind === "container") && r.rolledUpAnnual > 0,
+      ),
+    [estateTcoResult],
+  );
+  // Reset an out-of-date scope selection (e.g. its cost was removed) back to the whole estate.
+  const validScope = tcoScope && scopeOptions.some((r) => r.id === tcoScope) ? tcoScope : "";
+
+  const tco = useMemo(
+    () => (validScope ? subtreeTco(ws, validScope, temporal, tcoYears) : estateTcoResult),
+    [ws, temporal, tcoYears, validScope, estateTcoResult],
+  );
   const tcoMixed = tco.currencies.length > 1;
   const tcoCurrency = tco.currencies.length === 1 ? tco.currencies[0]! : "GBP";
+
+  const selectIssueId = (issue: LintIssue) => {
+    if (issue.ids.length === 0) return;
+    const key = issueKey(issue);
+    const index = issueCycle[key] ?? 0;
+    const id = issue.ids[index % issue.ids.length];
+    setIssueCycle((prev) => ({ ...prev, [key]: index + 1 }));
+    if (id && ws.elements.has(id)) select({ type: "element", id });
+  };
 
   return (
     <motion.aside
@@ -105,11 +168,10 @@ export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
               {issues.map((issue, i) => (
                 <li
                   key={i}
-                  className="cursor-pointer rounded border border-orange-200 bg-orange-50 px-2 py-1 text-xs text-orange-800 hover:bg-orange-100"
-                  onClick={() => {
-                    const id = issue.ids[0];
-                    if (id && ws.elements.has(id)) select({ type: "element", id });
-                  }}
+                  data-testid="lint-issue"
+                  data-severity={issue.severity}
+                  className={`cursor-pointer rounded border px-2 py-1 text-xs ${SEVERITY_CLASSES[issue.severity]}`}
+                  onClick={() => selectIssueId(issue)}
                 >
                   <span className="font-semibold">{issue.code}</span> — {issue.message}
                 </li>
@@ -193,7 +255,7 @@ export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
           <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
             TCO (total cost of ownership)
           </h3>
-          <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <label className="flex items-center gap-1.5 text-xs text-slate-600">
               Horizon
               <select
@@ -205,6 +267,22 @@ export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
                 {TCO_YEAR_OPTIONS.map((y) => (
                   <option key={y} value={y}>
                     {y}-year
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              Scope
+              <select
+                data-testid="tco-scope"
+                className="max-w-32 rounded-md border border-slate-300 px-1.5 py-0.5 text-xs"
+                value={validScope}
+                onChange={(e) => setTcoScope(e.target.value as Ulid | "")}
+              >
+                <option value="">Whole estate</option>
+                {scopeOptions.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
                   </option>
                 ))}
               </select>
@@ -222,22 +300,21 @@ export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
 
           {tcoMixed && (
             <p data-testid="tco-mixed-warning" className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800">
-              Mixed currencies — totals are unit-less
+              Mixed currencies — totals are shown per currency below, never added together
             </p>
           )}
 
-          <div className="mb-2 flex items-center gap-4 text-xs text-slate-700">
+          <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-700">
             <span>
               Total run-rate:{" "}
               <span data-testid="tco-total-annual" className="font-semibold tabular-nums">
-                {tcoMixed ? formatPlain(tco.totalAnnual) : formatMoney(tco.totalAnnual, tcoCurrency)}
-                /yr
+                {tcoMixed ? formatTotalsByCurrency(tco, "/yr") : `${formatMoney(tco.totalAnnual, tcoCurrency)}/yr`}
               </span>
             </span>
             <span>
               {tcoYears}-yr TCO:{" "}
               <span data-testid="tco-total" className="font-semibold tabular-nums">
-                {tcoMixed ? formatPlain(tco.totalTco) : formatMoney(tco.totalTco, tcoCurrency)}
+                {tcoMixed ? formatTotalsByCurrency(tco, "") : formatMoney(tco.totalTco, tcoCurrency)}
               </span>
             </span>
           </div>
@@ -259,30 +336,31 @@ export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {tco.rows.map((r) => (
-                      <tr
-                        key={r.id}
-                        data-testid="tco-row"
-                        className="cursor-pointer hover:bg-slate-50"
-                        onClick={() => select({ type: "element", id: r.id })}
-                      >
-                        <td className="max-w-32 truncate p-1">
-                          {r.name}{" "}
-                          <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-slate-500">
-                            {r.kind}
-                          </span>
-                        </td>
-                        <td className="p-1 text-right tabular-nums">
-                          {tcoMixed ? formatPlain(r.ownAnnual) : formatMoney(r.ownAnnual, tcoCurrency)}
-                        </td>
-                        <td className="p-1 text-right tabular-nums">
-                          {tcoMixed ? formatPlain(r.rolledUpAnnual) : formatMoney(r.rolledUpAnnual, tcoCurrency)}
-                        </td>
-                        <td className="p-1 text-right tabular-nums">
-                          {tcoMixed ? formatPlain(r.tco) : formatMoney(r.tco, tcoCurrency)}
-                        </td>
-                      </tr>
-                    ))}
+                    {tco.rows.map((r) => {
+                      // A row is only safe to print with a single currency symbol when every cost
+                      // entry in its own+rolled-up figure agrees on currency; otherwise fall back
+                      // to a plain (unlabelled) number, same rule as the estate totals above.
+                      const rowCurrency = r.currencies.length === 1 ? r.currencies[0] : undefined;
+                      const fmt = (n: number) => (rowCurrency ? formatMoney(n, rowCurrency) : formatPlain(n));
+                      return (
+                        <tr
+                          key={r.id}
+                          data-testid="tco-row"
+                          className="cursor-pointer hover:bg-slate-50"
+                          onClick={() => select({ type: "element", id: r.id })}
+                        >
+                          <td className="max-w-32 truncate p-1">
+                            {r.name}{" "}
+                            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-slate-500">
+                              {r.kind}
+                            </span>
+                          </td>
+                          <td className="p-1 text-right tabular-nums">{fmt(r.ownAnnual)}</td>
+                          <td className="p-1 text-right tabular-nums">{fmt(r.rolledUpAnnual)}</td>
+                          <td className="p-1 text-right tabular-nums">{fmt(r.tco)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

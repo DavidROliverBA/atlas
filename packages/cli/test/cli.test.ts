@@ -1,16 +1,21 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CommandBus,
   Workspace,
   seededUlidFactory,
   workspaceToFiles,
 } from "@atlas/core";
-import { diffDirs, exportView, validateDir } from "../src/index.js";
+import { diffDirs, exportView, run, validateDir } from "../src/index.js";
+import { materialiseGitRef, parseGitRange } from "../src/git.js";
 
-function writeWorkspace(mutate?: (ws: Workspace, bus: CommandBus, ids: ReturnType<typeof seededUlidFactory>) => void): string {
+/** Builds the shared test estate (two systems, a relationship, a landscape view). */
+function buildEstate(
+  mutate?: (ws: Workspace, bus: CommandBus, ids: ReturnType<typeof seededUlidFactory>) => void,
+): Workspace {
   const ids = seededUlidFactory(3);
   const ws = new Workspace({ name: "CLI test estate" });
   const bus = new CommandBus(ws);
@@ -36,14 +41,54 @@ function writeWorkspace(mutate?: (ws: Workspace, bus: CommandBus, ids: ReturnTyp
     },
   });
   mutate?.(ws, bus, ids);
+  return ws;
+}
 
-  const dir = mkdtempSync(join(tmpdir(), "atlas-cli-"));
+/** Writes a workspace's canonical files into an existing directory (overwriting). */
+function writeInto(dir: string, ws: Workspace): void {
   for (const [path, content] of workspaceToFiles(ws)) {
     const full = join(dir, path);
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, content);
   }
+}
+
+function writeWorkspace(mutate?: (ws: Workspace, bus: CommandBus, ids: ReturnType<typeof seededUlidFactory>) => void): string {
+  const dir = mkdtempSync(join(tmpdir(), "atlas-cli-"));
+  writeInto(dir, buildEstate(mutate));
   return dir;
+}
+
+/** Creates a scratch git repo with two commits of a tiny workspace under `workspace/`. */
+function makeGitFixture(): { repoDir: string; refA: string; refB: string } {
+  const repoDir = mkdtempSync(join(tmpdir(), "atlas-cli-git-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repoDir });
+
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "cli-test@example.com");
+  git("config", "user.name", "Atlas CLI Test");
+
+  writeInto(join(repoDir, "workspace"), buildEstate());
+  git("add", "-A");
+  git("commit", "-q", "-m", "first");
+  const refA = git("rev-parse", "HEAD").toString().trim();
+
+  writeInto(
+    join(repoDir, "workspace"),
+    buildEstate((ws, bus, ids) => {
+      bus.dispatch({
+        type: "createElement",
+        element: { id: ids.next(), kind: "system", name: "Data Platform", parentId: null },
+      });
+      const crm = [...ws.elements.values()].find((e) => e.name === "CRM")!;
+      bus.dispatch({ type: "updateElement", id: crm.id, changes: { status: "deprecated" } });
+    }),
+  );
+  git("add", "-A");
+  git("commit", "-q", "-m", "second");
+  const refB = git("rev-parse", "HEAD").toString().trim();
+
+  return { repoDir, refA, refB };
 }
 
 describe("atlas CLI", () => {
@@ -98,5 +143,71 @@ describe("atlas CLI", () => {
     expect(plantuml).toContain("C4_Context.puml");
     expect(plantuml).toContain('System(');
     expect(plantuml).toContain("@enduml");
+  });
+});
+
+describe("atlas diff --git (materialises refs via `git archive`)", () => {
+  it("parses a valid \"<a>..<b>\" range and rejects anything else", () => {
+    expect(parseGitRange("abc123..def456")).toEqual({ refA: "abc123", refB: "def456" });
+    expect(parseGitRange("main..feature/x")).toEqual({ refA: "main", refB: "feature/x" });
+    expect(parseGitRange("no-range-here")).toBeNull();
+    expect(parseGitRange("a..b..c")).toBeNull();
+    expect(parseGitRange("..b")).toBeNull();
+    expect(parseGitRange("a..")).toBeNull();
+  });
+
+  it("materialises a ref's workspace subtree into a directory diffDirs can read", () => {
+    const { repoDir, refA, refB } = makeGitFixture();
+    const dirA = materialiseGitRef(repoDir, refA, "workspace");
+    const dirB = materialiseGitRef(repoDir, refB, "workspace");
+
+    expect(validateDir(dirA).ok).toBe(true);
+    const lines = diffDirs(dirA, dirB);
+    expect(lines.join("\n")).toContain('+ element "Data Platform"');
+    expect(lines.join("\n")).toContain('~ element "CRM": status');
+  });
+
+  it("diffs the whole tree when no path is given", () => {
+    const { repoDir, refA, refB } = makeGitFixture();
+    // Nothing outside `workspace/` in this fixture, so an unscoped archive
+    // still resolves to a directory containing just that subtree.
+    const dirA = materialiseGitRef(repoDir, refA);
+    const dirB = materialiseGitRef(repoDir, refB);
+    const lines = diffDirs(join(dirA, "workspace"), join(dirB, "workspace"));
+    expect(lines.join("\n")).toContain('+ element "Data Platform"');
+  });
+
+  describe("run() end-to-end", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("`atlas diff --git <a>..<b> <path>` prints the semantic diff and exits 0", () => {
+      const { repoDir, refA, refB } = makeGitFixture();
+      const cwd = vi.spyOn(process, "cwd").mockReturnValue(repoDir);
+      const logs: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((line: string) => {
+        logs.push(line);
+      });
+
+      const code = run(["diff", "--git", `${refA}..${refB}`, "workspace"]);
+
+      expect(code).toBe(0);
+      expect(logs.join("\n")).toContain('+ element "Data Platform"');
+      expect(logs.join("\n")).toContain('~ element "CRM": status');
+      cwd.mockRestore();
+    });
+
+    it("rejects a malformed --git range with usage and exit code 2", () => {
+      const errors: string[] = [];
+      vi.spyOn(console, "error").mockImplementation((line: string) => {
+        errors.push(line);
+      });
+
+      const code = run(["diff", "--git", "not-a-range"]);
+
+      expect(code).toBe(2);
+      expect(errors.join("\n")).toContain("usage: atlas diff --git");
+    });
   });
 });

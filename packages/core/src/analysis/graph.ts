@@ -87,13 +87,37 @@ export function dependencyMatrix(ws: Workspace, ids?: Ulid[]): DependencyMatrix 
   return { ids: list, counts };
 }
 
+export type LintSeverity = "error" | "warning" | "info";
+
 export interface LintIssue {
-  code: "orphan-element" | "duplicate-name" | "unplaced-relationship";
+  code:
+    | "orphan-element"
+    | "duplicate-name"
+    | "unplaced-relationship"
+    | "unowned-critical"
+    | "agent-without-guardrail"
+    | "estimate-cost-on-live"
+    | "undocumented-system";
+  severity: LintSeverity;
   message: string;
   ids: Ulid[];
 }
 
-/** Consistency report: orphans, duplicate names in scope, relationships never shown. */
+/** Stencils that count as oversight for an agent, per the `agent-without-guardrail` rule. */
+const GUARDRAIL_STENCILS = new Set(["guardrail", "evaluator", "human-approval-gate"]);
+/** Stencils that count as an "agent" for the `agent-without-guardrail` rule (excludes tools, memory, etc.). */
+const AGENT_STENCILS = new Set(["agent", "orchestrator-agent"]);
+
+/**
+ * Consistency report: structural issues (orphans, duplicate names,
+ * relationships never shown) plus governance/domain rules (unowned
+ * criticals, agents without oversight, unverified live costs, undocumented
+ * systems).
+ *
+ * `stale-view` (a view nobody has touched in N days) is deliberately not
+ * implemented: views carry no `lastEdited` timestamp in the v1 metamodel, so
+ * there is nothing to compare against yet.
+ */
 export function lintWorkspace(ws: Workspace): LintIssue[] {
   const issues: LintIssue[] = [];
 
@@ -103,6 +127,7 @@ export function lintWorkspace(ws: Workspace): LintIssue[] {
     if (!placed.has(e.id) && e.kind !== "group") {
       issues.push({
         code: "orphan-element",
+        severity: "warning",
         message: `"${e.name}" is in the model but not on any view`,
         ids: [e.id],
       });
@@ -120,6 +145,7 @@ export function lintWorkspace(ws: Workspace): LintIssue[] {
       const name = key.split("::")[1];
       issues.push({
         code: "duplicate-name",
+        severity: "warning",
         message: `${ids.length} elements named "${name}" share the same scope`,
         ids: ids.sort(),
       });
@@ -136,10 +162,65 @@ export function lintWorkspace(ws: Workspace): LintIssue[] {
     if (!shown) {
       issues.push({
         code: "unplaced-relationship",
+        severity: "info",
         message: `Relationship ${ws.element(r.sourceId).name} → ${ws.element(r.targetId).name} appears on no view`,
         ids: [r.id],
       });
     }
   }
+
+  for (const e of ws.elements.values()) {
+    const isCritical = e.criticality === "high" || e.criticality === "critical";
+    if (isCritical && !e.owners?.length && !e.team) {
+      issues.push({
+        code: "unowned-critical",
+        severity: "warning",
+        message: `"${e.name}" is ${e.criticality} criticality but has no owners or team`,
+        ids: [e.id],
+      });
+    }
+  }
+
+  for (const e of ws.elements.values()) {
+    if (e.stencil?.pack !== "ai-agents" || !AGENT_STENCILS.has(e.stencil.stencil)) continue;
+    const hasGuardrail = ws.relationshipsOf(e.id).some((r) => {
+      const otherId = r.sourceId === e.id ? r.targetId : r.sourceId;
+      const other = ws.elements.get(otherId);
+      return !!other?.stencil && GUARDRAIL_STENCILS.has(other.stencil.stencil);
+    });
+    if (!hasGuardrail) {
+      issues.push({
+        code: "agent-without-guardrail",
+        severity: "warning",
+        message: `"${e.name}" has no relationship to a guardrail, evaluator or human-approval-gate`,
+        ids: [e.id],
+      });
+    }
+  }
+
+  for (const e of ws.elements.values()) {
+    if (e.status !== "live") continue;
+    const estimateCosts = (e.costs ?? []).filter((c) => !c.confidence || c.confidence === "estimate");
+    if (estimateCosts.length > 0) {
+      issues.push({
+        code: "estimate-cost-on-live",
+        severity: "info",
+        message: `"${e.name}" is live but carries ${estimateCosts.length} estimate-confidence cost ${estimateCosts.length === 1 ? "entry" : "entries"}`,
+        ids: [e.id],
+      });
+    }
+  }
+
+  for (const e of ws.elements.values()) {
+    if (e.kind === "system" && !e.description && !e.documentation) {
+      issues.push({
+        code: "undocumented-system",
+        severity: "info",
+        message: `"${e.name}" is a system with no description or documentation`,
+        ids: [e.id],
+      });
+    }
+  }
+
   return issues;
 }

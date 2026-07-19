@@ -91,6 +91,28 @@ describe("deterministic serialisation", () => {
     expect(() => workspaceFromFiles(broken)).toThrow(WorkspaceLoadError);
   });
 
+  it("round-trips a named state's explicit `order` byte-identically", () => {
+    const f = buildFixture();
+    f.bus.dispatch({ type: "updateState", id: f.current.id, changes: { order: 0 } });
+    f.bus.dispatch({ type: "updateState", id: f.target.id, changes: { order: 1 } });
+
+    const files = workspaceToFiles(f.ws);
+    const statePath = [...files.keys()].find((p) => p.startsWith("states/") && p.includes(f.current.id))!;
+    expect(JSON.parse(files.get(statePath)!).order).toBe(0);
+
+    const loaded = workspaceFromFiles(files);
+    expect(loaded.state(f.current.id).order).toBe(0);
+    expect(loaded.state(f.target.id).order).toBe(1);
+    expect([...workspaceToFiles(loaded).entries()]).toEqual([...files.entries()]);
+  });
+
+  it("omits `order` from the file entirely when unset, keeping the format unchanged for existing workspaces", () => {
+    const f = buildFixture();
+    const files = workspaceToFiles(f.ws);
+    const statePath = [...files.keys()].find((p) => p.startsWith("states/") && p.includes(f.current.id))!;
+    expect(JSON.parse(files.get(statePath)!)).not.toHaveProperty("order");
+  });
+
   it("rejects dangling references on load", () => {
     const files = workspaceToFiles(buildFixture().ws);
     const relPath = [...files.keys()].find((p) => p.startsWith("model/relationships/"))!;

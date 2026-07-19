@@ -207,6 +207,7 @@ export const stateSchema = {
     id: { type: "string", pattern: ULID_PATTERN },
     name: { type: "string", minLength: 1 },
     date: { type: "string", pattern: DATE_PATTERN },
+    order: { type: "integer" },
     description: { type: "string" },
   },
 } as const;

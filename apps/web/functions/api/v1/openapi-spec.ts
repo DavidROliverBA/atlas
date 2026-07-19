@@ -38,6 +38,18 @@ const CostEntry = {
   },
 };
 
+const StencilRef = {
+  type: "object",
+  required: ["pack", "stencil"],
+  description:
+    "Assigns a stencil-pack symbol to the element (e.g. an AWS/Azure icon). `attributes` are validated against that stencil's own JSON Schema (packages/stencils) — unknown packs are accepted as-is (renders via `kind` alone), but a known pack with an unknown `stencil` id, or `attributes` that violate its schema, returns 400 with the schema validation message.",
+  properties: {
+    pack: { type: "string", example: "aws" },
+    stencil: { type: "string", example: "ec2" },
+    attributes: { type: "object", description: "Pack- and stencil-specific; shape defined by that stencil's attributeSchema" },
+  },
+};
+
 const ElementProps = {
   kind: { enum: ["person", "system", "container", "component", "group"] },
   name: { type: "string" },
@@ -54,6 +66,7 @@ const ElementProps = {
   properties: { type: "object", additionalProperties: { type: "string" } },
   color: COLOR,
   costs: { type: "array", items: { $ref: "#/components/schemas/CostEntry" }, description: "TCO cost entries; roll up through containment" },
+  stencil: StencilRef,
   temporal: Temporal,
 };
 
@@ -102,11 +115,24 @@ const crud = (tag: string, base: string, notes = "") => ({
     description: `Validated by the metamodel — illegal input returns 400 with a human-readable message. ${notes}`.trim(),
     requestBody: { required: true, content: { "application/json": { schema: { $ref: `#/components/schemas/${base}Input` } } } },
     responses: {
-      "201": { description: "Created", content: { "application/json": { schema: { $ref: `#/components/schemas/${base}` } } } },
+      "201": {
+        description: "Created",
+        headers: { "x-atlas-revision": { $ref: "#/components/headers/AtlasRevision" } },
+        content: { "application/json": { schema: { $ref: `#/components/schemas/${base}` } } },
+      },
       "400": { $ref: "#/components/responses/ValidationError" },
     },
   },
 });
+
+/**
+ * Shared note for every `…Name` resolution parameter (parentName,
+ * sourceName, targetName, elementName): the server resolves the unique
+ * element with that name (case-insensitive), or returns one of two 400
+ * shapes — see `resolveByName` in the router for the exact wording.
+ */
+const NAME_RESOLUTION_NOTE =
+  'Resolved case-insensitively against existing element names — an alternative to passing the id directly. Zero matches: `400 {"error": "No element named \\"<name>\\""}`. More than one element sharing that name (ambiguous): `400 {"error": "Element name \\"<name>\\" is ambiguous"}`.';
 
 const byId = (tag: string, base: string, patchNote = "Set a field to null to clear it.") => ({
   get: {
@@ -119,12 +145,22 @@ const byId = (tag: string, base: string, patchNote = "Set a field to null to cle
     summary: `Update fields`,
     description: patchNote,
     requestBody: { required: true, content: { "application/json": { schema: { $ref: `#/components/schemas/${base}Input` } } } },
-    responses: { "200": { description: "Updated", content: { "application/json": { schema: { $ref: `#/components/schemas/${base}` } } } }, "400": { $ref: "#/components/responses/ValidationError" } },
+    responses: {
+      "200": {
+        description: "Updated",
+        headers: { "x-atlas-revision": { $ref: "#/components/headers/AtlasRevision" } },
+        content: { "application/json": { schema: { $ref: `#/components/schemas/${base}` } } },
+      },
+      "400": { $ref: "#/components/responses/ValidationError" },
+    },
   },
   delete: {
     tags: [tag],
     summary: `Delete`,
-    responses: { "204": { description: "Deleted" }, "400": { $ref: "#/components/responses/ValidationError" } },
+    responses: {
+      "204": { description: "Deleted", headers: { "x-atlas-revision": { $ref: "#/components/headers/AtlasRevision" } } },
+      "400": { $ref: "#/components/responses/ValidationError" },
+    },
   },
 });
 
@@ -312,7 +348,74 @@ export const openapiSpec = {
       get: {
         tags: ["workspace"],
         summary: "Full workspace snapshot (meta, elements, relationships, views, states)",
-        responses: { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/WorkspaceData" } } } } },
+        description:
+          "Carries an `ETag` (`\"r<revision>\"`) and `x-atlas-revision` header for cheap polling — send the last-seen ETag back via `If-None-Match` to get a bodyless 304 when the workspace hasn't changed. See `HEAD /workspace` to check the revision without fetching the body at all.",
+        parameters: [
+          { name: "If-None-Match", in: "header", schema: { type: "string" }, description: "Last-seen ETag (`\"r<revision>\"`); an exact match short-circuits to 304." },
+        ],
+        responses: {
+          "200": {
+            description: "OK",
+            headers: {
+              ETag: { $ref: "#/components/headers/WorkspaceETag" },
+              "x-atlas-revision": { $ref: "#/components/headers/AtlasRevision" },
+            },
+            content: { "application/json": { schema: { $ref: "#/components/schemas/WorkspaceData" } } },
+          },
+          "304": { description: "Not modified — the `If-None-Match` ETag matches the current revision; no body." },
+        },
+      },
+      head: {
+        tags: ["workspace"],
+        summary: "Workspace ETag/revision only — same headers as GET, no body",
+        description: "For polling loops that only need to know whether anything changed. Identical caching semantics to `GET /workspace`, without the transfer cost of the snapshot.",
+        parameters: [
+          { name: "If-None-Match", in: "header", schema: { type: "string" }, description: "Last-seen ETag (`\"r<revision>\"`); an exact match short-circuits to 304." },
+        ],
+        responses: {
+          "200": {
+            description: "OK — headers only",
+            headers: {
+              ETag: { $ref: "#/components/headers/WorkspaceETag" },
+              "x-atlas-revision": { $ref: "#/components/headers/AtlasRevision" },
+            },
+          },
+          "304": { description: "Not modified" },
+        },
+      },
+      post: {
+        tags: ["workspace"],
+        summary: "Atomic bulk import — replace the whole workspace (restore a backup)",
+        description:
+          "Restore-a-backup path: pair with `GET /workspace` to snapshot a workspace and later replay it here verbatim — the request body is the exact shape `GET /workspace` returns. Validation is dispatch-free (construct + referential-integrity check + stencil-ref validation, same rules the command bus would eventually enforce) rather than a full command replay, so it's fast even for large workspaces; a validation failure returns 400 and leaves the stored workspace untouched. On success the entire workspace (elements, relationships, views, states, meta) is replaced atomically — this is a destructive overwrite of everything currently stored, not a merge. Use `?dryRun=1` to validate a candidate snapshot without persisting it. Subject to the same optimistic-revision retry as every other mutation.",
+        parameters: [
+          {
+            name: "dryRun",
+            in: "query",
+            schema: { type: "string", enum: ["1"] },
+            description: "When `1`, validate only and return `200 {\"valid\": true}` without persisting anything.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          description: "A full WorkspaceData snapshot — the same shape GET /workspace returns.",
+          content: { "application/json": { schema: { $ref: "#/components/schemas/WorkspaceData" } } },
+        },
+        responses: {
+          "200": {
+            description: "Replaced — body is the stored snapshot (or `{valid: true}` when `dryRun=1`)",
+            headers: { "x-atlas-revision": { $ref: "#/components/headers/AtlasRevision" } },
+            content: {
+              "application/json": {
+                schema: { oneOf: [{ $ref: "#/components/schemas/WorkspaceData" }, { type: "object", properties: { valid: { const: true } } }] },
+              },
+            },
+          },
+          "400": {
+            description: "Rejected: dangling reference (checkIntegrity), or a stencil ref with an unknown stencil / attributes that fail its schema",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+        },
       },
     },
     "/elements": {
@@ -353,8 +456,32 @@ export const openapiSpec = {
         tags: ["views"],
         summary: "Place an element on a view",
         description: "Positions are grid units (1 unit = 20px). Accepts `elementName` instead of elementId. Placing an element already on the view returns 400.",
-        requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { elementId: ULID, elementName: { type: "string" }, x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" } } } } } },
-        responses: { "201": { description: "Placed", content: { "application/json": { schema: { $ref: "#/components/schemas/Placement" } } } }, "400": { $ref: "#/components/responses/ValidationError" } },
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  elementId: ULID,
+                  elementName: { type: "string", description: `Resolve the element by unique name (alternative to elementId). ${NAME_RESOLUTION_NOTE}` },
+                  x: { type: "number" },
+                  y: { type: "number" },
+                  width: { type: "number" },
+                  height: { type: "number" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Placed",
+            headers: { "x-atlas-revision": { $ref: "#/components/headers/AtlasRevision" } },
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Placement" } } },
+          },
+          "400": { $ref: "#/components/responses/ValidationError" },
+        },
       },
     },
     "/views/{id}/placements/{elementId}": {
@@ -366,12 +493,20 @@ export const openapiSpec = {
         tags: ["views"],
         summary: "Move/resize a placement",
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" } } } } } },
-        responses: { "200": { description: "Updated", content: { "application/json": { schema: { $ref: "#/components/schemas/Placement" } } } } },
+        responses: {
+          "200": {
+            description: "Updated",
+            headers: { "x-atlas-revision": { $ref: "#/components/headers/AtlasRevision" } },
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Placement" } } },
+          },
+        },
       },
       delete: {
         tags: ["views"],
         summary: "Remove an element from this view (never deletes it from the model)",
-        responses: { "204": { description: "Removed from view" } },
+        responses: {
+          "204": { description: "Removed from view", headers: { "x-atlas-revision": { $ref: "#/components/headers/AtlasRevision" } } },
+        },
       },
     },
     "/states": crud("states", "NamedState"),
@@ -381,9 +516,41 @@ export const openapiSpec = {
         tags: ["commands"],
         summary: "Apply a batch of raw Atlas commands atomically",
         description:
-          "The escape hatch with the full power of the command bus (createElement, updateElement, deleteElement, createRelationship, createView, placeOnView, updateWorkspaceMeta, batch, …). The batch is atomic: any invalid command rolls the whole batch back with a 400. Returns the resulting workspace snapshot. Note: ids inside commands must be valid new ULIDs you generate, or ids of existing objects. See `GET /commands/schema` for the exact input shape of every command type.",
-        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["commands"], properties: { label: { type: "string" }, commands: { type: "array", items: { type: "object", required: ["type"], properties: { type: { type: "string" } }, additionalProperties: true } } } } } } },
-        responses: { "200": { description: "Applied", content: { "application/json": { schema: { $ref: "#/components/schemas/WorkspaceData" } } } }, "400": { $ref: "#/components/responses/ValidationError" } },
+          "The escape hatch with the full power of the command bus (createElement, updateElement, deleteElement, createRelationship, createView, placeOnView, updateWorkspaceMeta, batch, …). The batch is atomic: any invalid command rolls the whole batch back with a 400. Returns the resulting workspace snapshot. Note: ids inside commands must be valid new ULIDs you generate, or ids of existing objects. Each array entry must match exactly one of the `Cmd_*` schemas below, discriminated by its `type` field — see `GET /commands/schema` for the same shapes as a flat map.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["commands"],
+                properties: {
+                  label: { type: "string" },
+                  commands: {
+                    type: "array",
+                    items: {
+                      oneOf: Object.keys(commandSchemas).map((type) => ({ $ref: `#/components/schemas/Cmd_${type}` })),
+                      discriminator: {
+                        propertyName: "type",
+                        mapping: Object.fromEntries(
+                          Object.keys(commandSchemas).map((type) => [type, `#/components/schemas/Cmd_${type}`]),
+                        ),
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Applied — body is the resulting workspace snapshot",
+            headers: { "x-atlas-revision": { $ref: "#/components/headers/AtlasRevision" } },
+            content: { "application/json": { schema: { $ref: "#/components/schemas/WorkspaceData" } } },
+          },
+          "400": { $ref: "#/components/responses/ValidationError" },
+        },
       },
     },
     "/commands/schema": {
@@ -439,6 +606,16 @@ export const openapiSpec = {
     parameters: {
       id: { name: "id", in: "path", required: true, schema: ULID },
     },
+    headers: {
+      AtlasRevision: {
+        description: "The new storage revision after this write. Increments by exactly 1 per successful save — poll cheaply by comparing against a previously-seen value instead of diffing whole snapshots.",
+        schema: { type: "integer", example: 42 },
+      },
+      WorkspaceETag: {
+        description: 'Strong validator for the current workspace snapshot: `"r<revision>"`. Send back via `If-None-Match` on `GET`/`HEAD /workspace` to get a bodyless 304 when nothing changed.',
+        schema: { type: "string", example: '"r42"' },
+      },
+    },
     responses: {
       ValidationError: {
         description: "Rejected by metamodel/schema validation",
@@ -453,13 +630,20 @@ export const openapiSpec = {
       ElementInput: {
         type: "object",
         required: ["kind", "name"],
-        properties: { ...ElementProps, parentName: { type: "string", description: "Resolve parent by unique name (alternative to parentId)" } },
+        properties: {
+          ...ElementProps,
+          parentName: { type: "string", description: `Resolve parent by unique name (alternative to parentId). ${NAME_RESOLUTION_NOTE}` },
+        },
         description: "On PATCH, include only fields to change; explicit null clears an optional field.",
       },
       Relationship: { type: "object", required: ["id", "sourceId", "targetId"], properties: { id: ULID, ...RelationshipProps } },
       RelationshipInput: {
         type: "object",
-        properties: { ...RelationshipProps, sourceName: { type: "string" }, targetName: { type: "string" } },
+        properties: {
+          ...RelationshipProps,
+          sourceName: { type: "string", description: `Resolve source by unique name (alternative to sourceId). ${NAME_RESOLUTION_NOTE}` },
+          targetName: { type: "string", description: `Resolve target by unique name (alternative to targetId). ${NAME_RESOLUTION_NOTE}` },
+        },
       },
       Placement,
       View: { type: "object", required: ["id", "kind", "name", "scopeId", "placements"], properties: { id: ULID, ...ViewProps, hiddenRelationshipIds: { type: "array", items: ULID }, edgeAnchors: { type: "object", description: "relationship id → {source, target} connection ports (t0–t4, b0–b4, l0–l2, r0–r2)", additionalProperties: { type: "object", properties: { source: { type: "string" }, target: { type: "string" } } } } } },
@@ -507,6 +691,10 @@ export const openapiSpec = {
           states: { type: "array", items: { $ref: "#/components/schemas/NamedState" } },
         },
       },
+      // One Cmd_<type> schema per commandSchemas entry, registered so
+      // POST /commands' requestBody can `oneOf`/discriminate over $refs
+      // instead of a loose `additionalProperties: true` bag.
+      ...Object.fromEntries(Object.entries(commandSchemas).map(([type, schema]) => [`Cmd_${type}`, schema])),
     },
   },
 } as const;

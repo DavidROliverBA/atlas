@@ -50,6 +50,7 @@ export {
   type DependencyMatrix,
   type DirectionFilter,
   type LintIssue,
+  type LintSeverity,
 } from "./analysis/graph.js";
 export {
   costEntryVisible,
@@ -57,8 +58,11 @@ export {
   elementAnnual,
   annualAtYearOffset,
   estateTco,
+  subtreeTco,
   tcoDiff,
   type TcoRow,
   type EstateTco,
   type TcoDelta,
+  type CurrencyTotals,
+  type CurrencyDelta,
 } from "./analysis/tco.js";
