@@ -41,11 +41,17 @@ read-side API).
 
 ## Outstanding — needs the owner (cannot be done from the repo)
 
-1. **`CLOUDFLARE_API_TOKEN` GitHub secret** (Pages:Edit scope) — until set, CI's deploy
-   and PR-preview jobs skip; production only updates from local `pnpm run deploy`.
-2. **Supabase PITR** — confirm/enable point-in-time recovery in the dashboard.
+(none — all closed as of 2026-07-19)
 
 ## Closed 2026-07-19
+
+- **`CLOUDFLARE_API_TOKEN` GitHub secret** — DONE. Account-owned token with
+  Pages Read+Edit on the BA account; verified against the Pages API before setting the
+  secret; CI deploy job ran green end-to-end. CI now deploys `main` automatically —
+  manual `pnpm run deploy` is no longer the only path to production.
+- **Supabase PITR** — effectively confirmed enabled: WAL archiving on with
+  `archive_timeout=120` (the 2-minute WAL-G shipping signature of the PITR add-on).
+  Retention window visible only in the dashboard (Database → Backups → Point in Time).
 
 - **`ATLAS_API_TOKEN_READONLY` Pages secret + `ATLAS_BACKUP_TOKEN` GitHub secret** —
   DONE. Same generated value set in both (never written to disk; rotate to a
