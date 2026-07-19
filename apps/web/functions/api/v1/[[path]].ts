@@ -29,12 +29,15 @@ import {
   type Ulid,
   type View,
 } from "@atlas/core";
+import { builtinRegistry } from "@atlas/stencils";
 import { RevisionConflictError, SupabaseStorageAdapter } from "@atlas/storage-supabase";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { openapiSpec, commandSchemas } from "./openapi-spec";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../config";
 
 export const DEFAULT_WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+
+const stencilRegistry = builtinRegistry();
 
 interface Env {
   ATLAS_API_TOKEN?: string;
@@ -177,7 +180,9 @@ export async function onRequest(context: Ctx): Promise<Response> {
       }
       await ensureWorkspaceRow(db);
       const { workspace: ws, revision } = await adapter.loadWithRevision();
-      const bus = new CommandBus(ws);
+      // Same stencil validation as the UI's bus — API writes must not be the
+      // path that sneaks malformed stencil refs/attributes into the model.
+      const bus = new CommandBus(ws, { stencils: stencilRegistry });
       const ids = ulidFactory();
       let result: unknown;
       try {

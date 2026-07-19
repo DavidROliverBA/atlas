@@ -38,9 +38,16 @@ export const HELP_SECTIONS: HelpSection[] = [
         <p>
           The <strong>palette</strong> (left sidebar, top) is grouped by C4 level — Context,
           Container, Component, Boundaries — with a search box and a "Packs…" manager for
-          enabling stencil packs (AWS, Azure, GCP, generic tech, and the C4 core shapes).
-          Stencils that don't belong on the current view are greyed out; click a usable one to
-          drop it onto the canvas.
+          enabling stencil packs (AWS, Azure, GCP, generic tech, business, and AI agents, and
+          the C4 core shapes). AI agents — agents, orchestrators, tools, memory, guardrails —
+          ships enabled by default alongside generic tech; the cloud and business packs stay
+          opt-in. Stencils that don't belong on the current view are greyed out; click a usable
+          one to drop it onto the canvas.
+        </p>
+        <p>
+          Press <strong>⌘K</strong> / <strong>Ctrl+K</strong> anywhere to open the command
+          palette — a fuzzy search over every element and view, for jumping around a large
+          model without scrolling the tree.
         </p>
       </div>
     ),
@@ -86,6 +93,16 @@ export const HELP_SECTIONS: HelpSection[] = [
         <ul className={ul}>
           <li>Drag a box and pink dashed alignment guides appear against nearby boxes' edges and centres.</li>
           <li>
+            Select a box or a group to reveal resize handles on its corners and edges; drag
+            one to resize (a floor stops it going unusably small). Size is per view and
+            undoable, same as a move.
+          </li>
+          <li>
+            Drag a box's centre over a Group and it gets an emerald highlight — drop there to
+            re-parent the element inside that group; drag it back out past every group to
+            un-nest it. Both are one undo step alongside the move itself.
+          </li>
+          <li>
             Hover a box to reveal its 16 connection ports (5 along the top, 5 along the
             bottom, 3 on each side) — drag from a port on one box to a port on another to
             create a relationship pinned to those exact ports.
@@ -99,6 +116,11 @@ export const HELP_SECTIONS: HelpSection[] = [
             "Reset routing on this view" to release it back to auto-routing.
           </li>
           <li>Box colour and line colour are set in the Inspector, with a "Reset to default" option.</li>
+          <li>
+            A relationship's Inspector panel also has "Hide on this view" / "Show on this
+            view", shown once both endpoints are placed on the current view — it only affects
+            this diagram, never the model.
+          </li>
           <li>The minimap (bottom-left of the canvas) is pannable and zoomable.</li>
           <li>
             The toolbar's <strong>Auto-layout</strong> button re-arranges the current view with
@@ -121,17 +143,30 @@ export const HELP_SECTIONS: HelpSection[] = [
         <p>Selecting an element or relationship shows its full field set:</p>
         <ul className={ul}>
           <li>Name, short description, and long-form <strong>Markdown documentation</strong> with Write/Preview tabs.</li>
-          <li>Status (lifecycle) and criticality; technology and tags as comma-separated lists.</li>
+          <li>Status (lifecycle) and criticality; technology stays a comma-separated list.</li>
+          <li>
+            <strong>Tags</strong> are a chip editor — existing tags show as removable chips
+            (×); type in the box and press Enter or comma to add another.
+          </li>
           <li>Box colour (elements) or line colour (relationships).</li>
           <li>Time: validity dates and named-state membership (see the Time section below).</li>
           <li>Costs (see Costs &amp; TCO below).</li>
+          <li>
+            <strong>State overrides</strong> — once the workspace has named states, a
+            collapsible section lets you set a different name, description, technology,
+            status or tags per state, applied automatically whenever that state is active.
+          </li>
           <li>
             <strong>Stencil attributes</strong> — for elements created from a stencil pack (e.g.
             an AWS resource), fields are generated from that stencil's JSON Schema, such as an
             account id or region.
           </li>
-          <li>Owners, team, external links, and "Appears in" — every view the element is placed on.</li>
+          <li>Owners, team, "Appears in" (every view the element is placed on), and an itemised <strong>links</strong> editor — each title/URL row is independently editable and removable.</li>
           <li>Actions: open the Connections view (all relationships), remove from this view, or delete from the model entirely.</li>
+          <li>
+            For relationships: "Hide on this view" / "Show on this view" once both endpoints
+            are placed on the current view — hides the line from just this diagram.
+          </li>
         </ul>
       </div>
     ),
@@ -216,7 +251,15 @@ export const HELP_SECTIONS: HelpSection[] = [
           <strong> Apply</strong> to commit the whole proposal as one undoable batch, or
           <strong> Discard</strong> to drop it. It can create elements, relationships and
           views, place elements on a view, update fields, set temporal validity/state
-          membership, and set cost entries.
+          membership, and set cost entries — and also <strong>delete</strong> elements
+          (cascading to their children, relationships and placements — it's told to confirm
+          a large blast radius with you first), delete relationships, remove elements from a
+          view, and delete whole views.
+        </p>
+        <p>
+          Each turn allows up to 8 rounds of tool calls; if it's still working when that cap
+          is hit, the reply says so ("Stopped after 8 tool rounds…") so a partial proposal
+          isn't mistaken for a finished one.
         </p>
       </div>
     ),
@@ -278,8 +321,12 @@ export const HELP_SECTIONS: HelpSection[] = [
             <td className="py-1">Redo</td>
           </tr>
           <tr>
+            <td className="py-1 pr-2 font-mono">⌘K / Ctrl+K</td>
+            <td className="py-1">Open (or close) the command palette — search elements and views, Enter to select/switch, Tab to place on view</td>
+          </tr>
+          <tr>
             <td className="py-1 pr-2 font-mono">Esc</td>
-            <td className="py-1">Deselect the current element or relationship</td>
+            <td className="py-1">Deselect the current element or relationship, or close the command palette</td>
           </tr>
           <tr>
             <td className="py-1 pr-2 font-mono">Delete / Backspace</td>

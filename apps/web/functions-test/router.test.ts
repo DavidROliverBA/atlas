@@ -120,6 +120,24 @@ describe("elements", () => {
     const res = await call("GET", ["elements", "does-not-exist"]);
     expect(res.status).toBe(404);
   });
+
+  it("rejects a stencil ref with attributes outside the pack schema (same validation as the UI)", async () => {
+    await call("POST", ["elements"], { body: { kind: "system", name: "Stencil Host" } });
+    await call("POST", ["elements"], {
+      body: { kind: "container", name: "Stencil Container", parentName: "Stencil Host" },
+    });
+    const res = await call("POST", ["elements"], {
+      body: {
+        kind: "component",
+        name: "Bad Stencil",
+        parentName: "Stencil Container",
+        stencil: { pack: "aws", stencil: "ec2", attributes: { notAField: true } },
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("additional properties");
+  });
 });
 
 describe("lint", () => {

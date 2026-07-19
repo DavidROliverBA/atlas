@@ -32,7 +32,7 @@ export const stencilRegistry = builtinRegistry();
  */
 export function enabledPackIds(ws: Workspace): string[] {
   const ids = (ws.meta.stencilPacks ?? []).map((ref) => ref.split("@")[0]!);
-  return ids.length ? ids : ["c4-core", "generic-tech"];
+  return ids.length ? ids : ["c4-core", "generic-tech", "ai-agents"];
 }
 
 export const GRID = 20;

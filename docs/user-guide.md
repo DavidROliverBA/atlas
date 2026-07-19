@@ -26,12 +26,13 @@ explicitly.
 10. [Cost modelling (TCO)](#cost-modelling-tco)
 11. [Analysis: lint, dependency matrix, impact, connections](#analysis-lint-dependency-matrix-impact-connections)
 12. [Undo, redo and the command bus](#undo-redo-and-the-command-bus)
-13. [The AI assistant](#the-ai-assistant)
-14. [Persistence: local vs shared database](#persistence-local-vs-shared-database)
-15. [Signing in](#signing-in)
-16. [The REST API](#the-rest-api)
-17. [Export and import](#export-and-import)
-18. [Keyboard shortcuts](#keyboard-shortcuts)
+13. [The command palette (⌘K)](#the-command-palette-k)
+14. [The AI assistant](#the-ai-assistant)
+15. [Persistence: local vs shared database](#persistence-local-vs-shared-database)
+16. [Signing in](#signing-in)
+17. [The REST API](#the-rest-api)
+18. [Export and import](#export-and-import)
+19. [Keyboard shortcuts](#keyboard-shortcuts)
 
 ---
 
@@ -267,18 +268,52 @@ down by name.
 Stencils come from **stencil packs**, toggled via the **Packs…** button, which opens a
 **Stencil packs** panel with a checkbox and stencil count per pack. The built-in packs are:
 
-| Pack | Name | Contents |
-|---|---|---|
-| `c4-core` | C4 Core | Person, Software System, Container, Component, Group (5) |
-| `generic-tech` | Generic Technology | Technology-agnostic building blocks (9) |
-| `business` | Business | Business architecture concepts (7) |
-| `aws` | Amazon Web Services | ~40 common AWS services (42) |
-| `azure` | Microsoft Azure | ~40 common Azure services (39) |
-| `gcp` | Google Cloud Platform | ~40 common GCP services (39) |
+| Pack | Name | Contents | On by default? |
+|---|---|---|---|
+| `c4-core` | C4 Core | Person, Software System, Container, Component, Group (5) | Yes |
+| `generic-tech` | Generic Technology | Technology-agnostic building blocks (9) | Yes |
+| `ai-agents` | AI Agents | Agents, orchestration, tools, memory, guardrails, human approval (14) | Yes |
+| `business` | Business | Business architecture concepts (7) | No |
+| `aws` | Amazon Web Services | ~40 common AWS services (42) | No |
+| `azure` | Microsoft Azure | ~40 common Azure services (39) | No |
+| `gcp` | Google Cloud Platform | ~40 common GCP services (39) | No |
 
 Disabling a pack never deletes elements built from it — they just fall back to a plain
 symbol for their underlying kind. Built-in pack icons are generated glyphs (an
 abbreviation on a coloured tile), not the providers' trademarked artwork.
+
+### AI-agents stencils
+
+The `ai-agents` pack (indigo glyphs) is enabled on every new workspace, alongside
+`c4-core` and `generic-tech`, so agentic-AI vocabulary is available out of the box —
+unlike the cloud and business packs, which stay opt-in. It follows the same
+container-vs-component split as everything else in the palette:
+
+- **Container-level** (deployable units): `AI Agent`, `Orchestrator Agent`,
+  `Agent Runtime`, `Model Gateway`, `MCP Server`, `Code Execution Sandbox`. Use these for
+  the pieces of an agentic system that are independently addressable — a single agent or
+  orchestrator, the process hosting it, the gateway routing to model providers, an MCP
+  server, or a sandbox.
+- **Component-level** (nested inside a container): `Tool`, `Vector / Semantic Memory`,
+  `Episodic Memory`, `Guardrail`, `Evaluator`, `Human Approval Gate`, `Prompt /
+  Instruction Template`. Use these for the internals of an agent or runtime — a callable
+  tool, a memory store, a safety check, a quality scorer, an approval gate, or a
+  versioned prompt.
+- **Boundary**: `Agent Swarm`, a group for clustering peer agents in a swarm/mesh
+  pattern, same role as the AWS pack's `VPC`.
+
+`autonomyLevel` (suggest/approve/act/full-auto) and other enum attributes are edited as
+plain text in the Inspector's stencil-attributes panel, validated against the stencil's
+JSON Schema the same way an AWS `accountId` is — an invalid value is rejected with an
+error naming the stencil and field.
+
+See `docs/research-ai-agents.md` for the full worked "Ops Copilot" example (an
+orchestrator agent, two sub-agents, a model gateway, an MCP server with two tools,
+vector and episodic memory, a guardrail, an evaluator and a human-approval gate) that
+motivated this pack's design. The seeded demo estate itself stays airline-only — try the
+pack by drilling into **Booking Engine**'s container view and placing an `AI Agent` or
+`Orchestrator Agent` there, then drilling into it to add a `Tool` or `Guardrail`
+component, exactly as you would for any other container.
 
 ---
 
@@ -293,10 +328,25 @@ grid as you drop them.
 
 ### Resizing
 
-Atlas does not currently support drag-to-resize on the canvas. Every element gets a fixed
-default footprint when placed — 180×100px (9×5 grid units) for people/systems/containers/
-components, 360×240px (18×12 grid units) for groups. Non-default sizes can only be set via
-an import or the REST API's placement `width`/`height` fields.
+Every element gets a fixed default footprint when placed — 180×100px (9×5 grid units) for
+people/systems/containers/components, 360×240px (18×12 grid units) for groups — but
+selecting a box or a group reveals resize handles (React Flow's `NodeResizer`) at its
+corners and edges. Drag a handle to resize; there's no fixed aspect ratio. A floor
+prevents unusably small boxes: 120×60px for elements, 200×120px for groups. A resize is
+persisted as a `width`/`height` change to that element's placement **on the current
+view only** — the same element can be a different size on another view — and it's a
+single undo step, the same command family as dragging to reposition.
+
+### Nesting by dragging into (and out of) a group
+
+Drag any box so its centre is over a Group box already on the view, and the group gets
+an emerald ring and border while you hover it; drop there and Atlas re-parents the
+dragged element inside that group (a combined "Move & re-parent" batch: one undo step
+for the position change and the containment change together). Drag a nested element
+back out past every group's bounds and it un-nests to the group's own parent. Illegal
+re-parents (e.g. dragging a Container out of every group so it would end up with no
+legal parent, or into a group nested inside itself) are rejected and the box snaps back
+to its pre-drag position — the model is never left in a broken state.
 
 ### Connecting boxes: the 16 ports
 
@@ -342,11 +392,14 @@ Both are set from the Inspector, via a native colour swatch — there's no right
 
 ### Hiding a relationship on a view
 
-The underlying model and the REST API both support hiding a specific relationship on one
-view without touching the model (`hiddenRelationshipIds` on the view) — a hidden
-relationship still exists everywhere else and reappears if you unhide it. **This isn't
-currently exposed as a button or menu in the app UI**; today it's only reachable by
-patching a view through the REST API.
+Select a relationship whose source and target are both placed on the current view and
+the Inspector's **Visibility** field shows a **Hide on this view** button. Click it and
+the line disappears from this one diagram only (`hiddenRelationshipIds` on the view) —
+the relationship still exists everywhere else in the model and on every other view. With
+it hidden, the Inspector instead shows *"Hidden on this view"* plus a **Show on this
+view** button to bring it back. The field only appears when both endpoints are actually
+on the current view; the same thing is also reachable via the REST API by patching the
+view directly.
 
 ### The minimap
 
@@ -405,13 +458,14 @@ tab. Nothing here is duplicated per view — every field is on the shared model 
 | Status | `—`, Proposed, Planned, Live, Deprecated, Decommissioned |
 | Criticality | `—`, Low, Medium, High, Critical |
 | Technology (comma-separated) | Free-text tag list, e.g. `Kotlin, Spring Boot` |
-| Tags (comma-separated) | Free-text tag list |
+| Tags | Chip-based editor — existing tags render as removable chips (each with a **×**); type in the box and press **Enter** or **,** to add a new one |
 | Box colour | Colour swatch + Reset to default |
 | Time (validity & states) | See [Temporal modelling](#temporal-modelling) |
 | Costs | See [Cost modelling](#cost-modelling-tco) |
+| State overrides | See [Temporal modelling](#temporal-modelling); only shown once the workspace has at least one named state |
 | Owners | Free-text (comma-separated) |
 | Team | Free text |
-| Links | A list of title/URL pairs, each with a "Remove link" (✕); Add is disabled until you enter a title and a URL starting `http(s)://` |
+| Links | Itemised editor: each row is an independently editable title/URL pair with its own "Remove link" (✕); **+ Add link** always appends a new blank row for you to fill in |
 | Appears in | Read-only list of every view the element is placed on, each a clickable jump link; shows *"Not placed on any view yet."* for orphans |
 | Connections view — all relationships | Opens the automated ego-network view (see [Analysis](#analysis-lint-dependency-matrix-impact-connections)); hidden for Groups |
 | Remove from this view / Delete from model… | See [Delete from a view vs delete from the model](#delete-from-a-view-vs-delete-from-the-model) |
@@ -429,9 +483,10 @@ these validate against the pack's JSON Schema the same way every other command d
 | Description | Free text |
 | Protocol / technology (comma-separated) | e.g. `HTTPS, REST` |
 | Direction | Forward or Bidirectional |
-| Tags (comma-separated) | Free text |
+| Tags | Same chip-based editor as elements |
 | Time (validity & states) | Same temporal editor as elements |
 | Line colour | Colour swatch + Reset |
+| Visibility | **Hide on this view** / **Show on this view** — see [Hiding a relationship on a view](#hiding-a-relationship-on-a-view); only shown when both endpoints are placed on the current view |
 | Reset routing on this view | See [Canvas editing](#canvas-editing) |
 | Delete relationship | Removes it from the model entirely |
 
@@ -481,11 +536,16 @@ has a state override on the "Target 2028" state that changes its technology from
 Target-2028 tech stack without altering the Current-state record.
 
 State overrides are fully supported by the model and the temporal engine, and Atlas
-applies them automatically wherever a state context is active. **There's no dedicated
-editor for authoring overrides directly in the current app UI** (the Inspector's state
-checkboxes control *membership*, not per-state attribute values) — today they're set via
-the REST API or scripted seeding, the same way the demo estate's own Web App override was
-created.
+applies them automatically wherever a state context is active. **To author one in the
+app**, open an element's Inspector and expand the collapsible **State overrides** section
+(only shown once the workspace has at least one named state; its header summarises how
+many states already carry an override, e.g. "2 states" or "No overrides"). Pick a state
+from the dropdown, then fill in whichever fields should differ for that state — Name,
+Description, Technology, Status, Tags — leaving a field blank means "no override" for
+that field. **Clear overrides for this state** removes every override on the picked
+state in one action. This is a separate mechanism from the Inspector's Time section: the
+Time checkboxes control *membership* (is this element part of a state at all), while
+State overrides control what its attributes *look like* while that state is active.
 
 ### The timeline scrubber
 
@@ -697,6 +757,33 @@ Both toolbar buttons are disabled automatically when there's nothing to undo/red
 
 ---
 
+## The command palette (⌘K)
+
+Press **⌘K** / **Ctrl+K** anywhere in the app (it's suppressed while a text input has
+focus, same as the other global shortcuts) to open a fuzzy jump-to search over every
+element and view in the workspace. Pressing **⌘K** again while it's open closes it.
+
+With the box empty, it lists every view (alphabetical) followed by every top-level
+element (alphabetical). Start typing and it scores every element and view by name, kind
+label, and (for elements) breadcrumb / (for views) scope, showing the best matches first
+— an exact substring match ranks above a loose in-order/fuzzy match. Each element result
+shows its kind, its breadcrumb, and either an **"on view"** badge if it's already placed
+on the view you're looking at, or a **"+ place"** button if it's legal to place there and
+isn't yet.
+
+- **Enter** — selects the highlighted element (opening it in the Inspector) or switches
+  to the highlighted view.
+- **Tab** — places the highlighted element on the current view instead (only when it's
+  eligible and not already there) — the same "+ place" action as clicking its button,
+  without closing the palette's focus trap.
+- **↑ / ↓** — move the highlight.
+- **Escape**, or clicking outside the box — closes the palette.
+
+A footer legend at the bottom of the palette spells these out: *"↑↓ navigate · Enter
+select / switch view · Tab place on view · Esc close."*
+
+---
+
 ## The AI assistant
 
 Switch to the **AI chat** tab in the right sidebar to open the assistant. It requires a
@@ -741,6 +828,24 @@ The assistant's tools map directly onto model operations:
   [Cost modelling](#cost-modelling-tco): category, classification, kind, amount,
   currency, period, amortisation, confidence, and temporal scope.
 - **Set temporal state** — validity dates and/or named-state membership.
+- **Delete elements** — removes them from the model entirely. This cascades: deleting an
+  element also deletes everything it contains, every relationship touching any of them,
+  and every view placement — the assistant is instructed to confirm the blast radius with
+  you first for anything beyond a single leaf element, rather than guess.
+- **Delete relationships** — by source/target (and a verb phrase to disambiguate if more
+  than one relationship connects the same pair).
+- **Remove elements from a view** — takes them off one diagram only, same as the
+  Inspector's "Remove from this view"; the model and every other view are untouched.
+- **Delete a view** — removes the diagram and its placements; the elements and
+  relationships it showed stay in the model.
+
+### When the assistant stops partway through
+
+Each turn runs the model through up to 8 rounds of tool calls before returning its
+proposal. If it's still trying to call more tools when that cap is hit, the reply is
+appended with a note: *"(Stopped after 8 tool rounds — the proposal below may be
+incomplete; ask me to continue.)"* — treat the proposal as a partial result and ask it to
+carry on rather than assuming it finished everything you asked for.
 
 ---
 
@@ -802,7 +907,14 @@ bus as the UI and the AI assistant, so the same metamodel rules and the same
 human-readable error messages apply. It supports elements, relationships, views and
 placements, named states, cost entries, and a raw `POST /commands` endpoint for atomic
 multi-step batches, plus convenience name-based lookups (`parentName`, `sourceName`, …)
-for scripting. Full reference and worked `curl` examples: [`docs/api.md`](api.md). An
+for scripting. It also exposes the app's read-side analysis over the same data, computed
+straight from the model rather than drawn or cached by hand: `GET /lint` (the same
+consistency report as the Analysis drawer), `GET /elements/{id}/connections` (the same
+ego-network traversal as the Connections view, depth/direction-bounded), `GET
+/views/{id}/export?format=mermaid|plantuml|svg` (the same export the Toolbar's Export
+menu downloads), and `GET /commands/schema` (a JSON-schema map for every command type, to
+validate a batch before `POST`-ing it to `/commands`). Full reference and worked `curl`
+examples: [`docs/api.md`](api.md). An
 interactive Swagger UI — with "Try it out" support — is published at
 [`/api/docs`](https://atlas-modelling.pages.dev/api/docs), backed by the machine-readable
 spec at [`/api/v1/openapi.json`](https://atlas-modelling.pages.dev/api/v1/openapi.json).
@@ -848,7 +960,8 @@ down anything you want to keep first.
 |---|---|---|
 | **⌘Z** / **Ctrl+Z** | Undo | Toolbar tooltip shows "Undo (⌘Z)" regardless of platform |
 | **⇧⌘Z** / **Ctrl+Shift+Z** | Redo | Toolbar tooltip shows "Redo (⇧⌘Z)" |
-| **Escape** | Deselect the current element or relationship | |
+| **⌘K** / **Ctrl+K** | Open (or close) the [command palette](#the-command-palette-k) | Suppressed while a text input has focus, same as the shortcuts below |
+| **Escape** | Deselect the current element or relationship, or close the command palette if it's open | |
 | **Delete** / **Backspace** | Remove the selected element from the current view (never the model), or delete the selected relationship from the model | |
 | **Enter** (chat input) | Send the current message in the AI chat panel | Shift+Enter inserts a newline instead |
 | **Enter** (Inspector text field) | Commit the field (blurs the input) | |
@@ -863,5 +976,6 @@ required, only which symbol it prints in tooltips.
 *This guide was written against the Atlas source in this repository. If a button label,
 field name, or behaviour above stops matching what you see in the app, the code has moved
 on — check the component named alongside each feature (`Toolbar.tsx`, `Palette.tsx`,
-`Canvas.tsx`, `Inspector.tsx`, `CostsEditor.tsx`, `TimelineBar.tsx`, `AnalysisDrawer.tsx`,
-`ChatPanel.tsx`) for the current truth.*
+`Canvas.tsx`, `nodes.tsx`, `Inspector.tsx`, `TagsEditor.tsx`, `LinksEditor.tsx`,
+`StateOverridesEditor.tsx`, `CostsEditor.tsx`, `CommandPalette.tsx`, `TimelineBar.tsx`,
+`AnalysisDrawer.tsx`, `ChatPanel.tsx`) for the current truth.*
