@@ -21,10 +21,10 @@ export default defineConfig({
         // download, but it keeps any single emitted chunk under Vite's size
         // warning threshold and lets the browser cache each vendor bundle
         // separately across deploys.
-        manualChunks: {
-          xyflow: ["@xyflow/react"],
-          "framer-motion": ["framer-motion"],
-          supabase: ["@supabase/supabase-js"],
+        manualChunks(id) {
+          if (id.includes("node_modules/@xyflow/")) return "xyflow";
+          if (id.includes("node_modules/framer-motion/")) return "framer-motion";
+          if (id.includes("node_modules/@supabase/")) return "supabase";
         },
       },
     },
