@@ -28,7 +28,7 @@ jobs:
             echo "::notice::ATLAS_BACKUP_TOKEN secret not set — skipping nightly backup (add it in repo settings to enable)"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.creds.outputs.present == 'true'
 
       - name: Fetch production workspace snapshot
