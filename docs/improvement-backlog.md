@@ -43,12 +43,20 @@ read-side API).
 
 1. **`CLOUDFLARE_API_TOKEN` GitHub secret** (Pages:Edit scope) — until set, CI's deploy
    and PR-preview jobs skip; production only updates from local `pnpm run deploy`.
-2. **`ATLAS_API_TOKEN_READONLY` Pages secret + `ATLAS_BACKUP_TOKEN` GitHub secret**
-   (same value) — enables the read-only tier and the nightly backup workflow.
-3. **Cloudflare dashboard rate-limiting rule** on `/api/*` — the real backstop behind
-   the in-function limiter.
-4. **`supabase db push`** for migration `20260720000001_placement_workspace.sql`.
-5. **Supabase PITR** — confirm/enable point-in-time recovery in the dashboard.
+2. **Supabase PITR** — confirm/enable point-in-time recovery in the dashboard.
+
+## Closed 2026-07-19
+
+- **`ATLAS_API_TOKEN_READONLY` Pages secret + `ATLAS_BACKUP_TOKEN` GitHub secret** —
+  DONE. Same generated value set in both (never written to disk; rotate to a
+  password-manager-held value if a plaintext copy is ever needed). Verified end-to-end:
+  manual backup-workflow run succeeded and committed a snapshot to the `backups` branch.
+- **Cloudflare rate-limiting rule on `/api/*`** — INFEASIBLE as specified: rate rules
+  are zone-scoped and the BA account has no zones; `atlas-modelling.pages.dev` sits on
+  Cloudflare's own zone. Revisit only if the app moves to a custom domain. The
+  in-function limiter is the only rate-limiting layer.
+- **`supabase db push` for `20260720000001_placement_workspace.sql`** — DONE; all 11
+  migrations confirmed applied via the Supabase MCP (`list_migrations`).
 
 ## Deferred — features needing their own design phase
 
