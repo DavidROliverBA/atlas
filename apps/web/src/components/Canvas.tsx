@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
   ConnectionMode,
@@ -23,13 +23,19 @@ import {
   effectiveElement,
   visibleElements,
   visibleRelationships,
+  type Command,
   type Element,
   type StateDiff,
   type Ulid,
+  type Workspace,
 } from "@atlas/core";
 import { DEFAULT_H, DEFAULT_W, GRID, useAtlas } from "../store";
 import { nodeTypes, type AtlasNode } from "./nodes";
-import { IsoCanvas } from "./IsoCanvas";
+
+// The isometric renderer (framer-motion scene + projection math) is only
+// needed once a view is switched into iso mode, so it's split into its own
+// chunk instead of loading eagerly with the default 2D canvas.
+const IsoCanvas = lazy(() => import("./IsoCanvas").then((m) => ({ default: m.IsoCanvas })));
 
 const GROUP_W = 18;
 const GROUP_H = 12;
@@ -62,6 +68,44 @@ function elementDiffStatus(diff: StateDiff, id: Ulid): "added" | "removed" | "ch
   return undefined;
 }
 
+/** Is `candidateId` a descendant of `ancestorId` in the containment tree? */
+function isDescendantOf(ws: Workspace, candidateId: Ulid, ancestorId: Ulid): boolean {
+  let cursor = ws.elements.get(candidateId)?.parentId ?? null;
+  while (cursor !== null) {
+    if (cursor === ancestorId) return true;
+    cursor = ws.elements.get(cursor)?.parentId ?? null;
+  }
+  return false;
+}
+
+/**
+ * The smallest group node whose bounds contain `point` (drag-into-group
+ * re-parenting drop target), excluding `excludeId` and its descendants —
+ * a node can never be dropped into itself or something it already contains.
+ */
+function groupUnderPoint(
+  point: { x: number; y: number },
+  candidates: Node[],
+  ws: Workspace,
+  excludeId: Ulid,
+): Node | undefined {
+  const hits = candidates.filter(
+    (n) =>
+      n.type === "atlasGroup" &&
+      n.id !== excludeId &&
+      !isDescendantOf(ws, n.id as Ulid, excludeId) &&
+      point.x >= n.position.x &&
+      point.x <= n.position.x + (n.width ?? GROUP_W * GRID) &&
+      point.y >= n.position.y &&
+      point.y <= n.position.y + (n.height ?? GROUP_H * GRID),
+  );
+  hits.sort(
+    (a, b) => (a.width ?? GROUP_W * GRID) * (a.height ?? GROUP_H * GRID) -
+      (b.width ?? GROUP_W * GRID) * (b.height ?? GROUP_H * GRID),
+  );
+  return hits[0];
+}
+
 function CanvasInner() {
   const ws = useAtlas((s) => s.ws);
   const rev = useAtlas((s) => s.rev);
@@ -76,6 +120,8 @@ function CanvasInner() {
 
   const [nodes, setNodes] = useState<Node[]>([]);
   const [guides, setGuides] = useState<GuideSegment[]>([]);
+  /** Group node under the dragged node's centre, highlighted as a drop target. */
+  const [dropTargetId, setDropTargetId] = useState<Ulid | null>(null);
 
   const temporal = useAtlas((s) => s.temporal);
   const diffPair = useAtlas((s) => s.diffPair);
@@ -204,12 +250,9 @@ function CanvasInner() {
 
   const onNodeDrag = useCallback(
     (_e: unknown, node: Node) => {
-      const moving: Box = {
-        x: node.position.x,
-        y: node.position.y,
-        w: node.width ?? node.measured?.width ?? DEFAULT_W * GRID,
-        h: node.height ?? node.measured?.height ?? DEFAULT_H * GRID,
-      };
+      const w = node.width ?? node.measured?.width ?? DEFAULT_W * GRID;
+      const h = node.height ?? node.measured?.height ?? DEFAULT_H * GRID;
+      const moving: Box = { x: node.position.x, y: node.position.y, w, h };
       const others = nodes
         .filter((n) => n.id !== node.id)
         .map((n) => ({
@@ -219,24 +262,70 @@ function CanvasInner() {
           h: n.height ?? n.measured?.height ?? DEFAULT_H * GRID,
         }));
       setGuides(computeGuides(moving, others));
+
+      // Drop-target highlight: the smallest group under the node's centre.
+      const center = { x: node.position.x + w / 2, y: node.position.y + h / 2 };
+      const target = groupUnderPoint(center, nodes, ws, node.id as Ulid);
+      setDropTargetId((target?.id as Ulid) ?? null);
     },
-    [nodes],
+    [nodes, ws],
   );
 
   const onNodeDragStop = useCallback(
     (_e: unknown, node: Node) => {
       setGuides([]);
-      dispatch({
+      setDropTargetId(null);
+
+      const w = node.width ?? node.measured?.width ?? DEFAULT_W * GRID;
+      const h = node.height ?? node.measured?.height ?? DEFAULT_H * GRID;
+      const center = { x: node.position.x + w / 2, y: node.position.y + h / 2 };
+      const targetGroup = groupUnderPoint(center, nodes, ws, node.id as Ulid);
+
+      const currentParentId = ws.elements.get(node.id as Ulid)?.parentId ?? null;
+      let newParentId: Ulid | null | undefined; // undefined = leave parentId unchanged
+      if (targetGroup && targetGroup.id !== currentParentId) {
+        // Dragged into a (different) group.
+        newParentId = targetGroup.id as Ulid;
+      } else if (!targetGroup && currentParentId) {
+        // Dragged out of every group: un-nest back to the group's own parent,
+        // but only if the current parent is actually a group on this view.
+        const currentParent = ws.elements.get(currentParentId);
+        const parentIsGroupOnView = currentParent?.kind === "group" && nodes.some((n) => n.id === currentParentId);
+        if (parentIsGroupOnView) newParentId = currentParent!.parentId;
+      }
+
+      const positionCommand: Command = {
         type: "updatePlacement",
         viewId: activeViewId,
-        elementId: node.id,
+        elementId: node.id as Ulid,
         changes: {
           x: Math.round(node.position.x / GRID),
           y: Math.round(node.position.y / GRID),
         },
-      });
+      };
+      const command: Command =
+        newParentId !== undefined
+          ? {
+              type: "batch",
+              label: "Move & re-parent",
+              commands: [
+                { type: "updateElement", id: node.id as Ulid, changes: { parentId: newParentId } },
+                positionCommand,
+              ],
+            }
+          : positionCommand;
+
+      const error = dispatch(command);
+      if (error) {
+        // Illegal re-parent (containment/cycle rule) — snap back to the
+        // pre-drag position; the workspace was never mutated.
+        const original = derived.nodes.find((n) => n.id === node.id);
+        if (original) {
+          setNodes((nds) => nds.map((n) => (n.id === node.id ? { ...n, position: original.position } : n)));
+        }
+      }
     },
-    [dispatch, activeViewId],
+    [dispatch, activeViewId, nodes, ws, derived],
   );
 
   const onConnect = useCallback(
@@ -283,10 +372,20 @@ function CanvasInner() {
     [drillInto, setActiveView],
   );
 
+  // Overlay the drag-into-group drop-target highlight without disturbing the
+  // controlled node state (position, selection, ...) driving everything else.
+  const displayNodes = useMemo(
+    () =>
+      dropTargetId === null
+        ? nodes
+        : nodes.map((n) => (n.id === dropTargetId ? { ...n, data: { ...n.data, dropHighlight: true } } : n)),
+    [nodes, dropTargetId],
+  );
+
   return (
     <div className="h-full w-full" data-testid="canvas">
       <ReactFlow
-        nodes={nodes}
+        nodes={displayNodes}
         edges={derived.edges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
@@ -342,7 +441,11 @@ export function Canvas() {
   const activeViewId = useAtlas((s) => s.activeViewId);
   const navDirection = useAtlas((s) => s.navDirection);
   if (ws.views.get(activeViewId)?.renderMode === "isometric") {
-    return <IsoCanvas />;
+    return (
+      <Suspense fallback={<div className="h-full w-full bg-slate-100" data-testid="iso-canvas-loading" />}>
+        <IsoCanvas />
+      </Suspense>
+    );
   }
   return (
     <ReactFlowProvider>

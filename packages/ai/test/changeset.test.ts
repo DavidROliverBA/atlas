@@ -122,6 +122,102 @@ describe("ChangeSetBuilder", () => {
   });
 });
 
+describe("ChangeSetBuilder — deletion and view removal", () => {
+  it("cascades element deletion to children and relationships, with a summary reflecting counts", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    const legacy = builder.createElement({ name: "Legacy Mainframe", kind: "system" });
+    builder.createElement({ name: "Legacy DB", kind: "container", parent: "Legacy Mainframe" });
+    builder.createRelationship({ source: "Legacy Mainframe", target: "Booking Engine", name: "feeds" });
+
+    builder.deleteElements(["Legacy Mainframe"]);
+
+    // Clone loses the system, its child container, and the relationship.
+    expect(builder.clone.elements.has(legacy.id)).toBe(false);
+    expect([...builder.clone.elements.values()].some((e) => e.name === "Legacy DB")).toBe(false);
+    expect(builder.clone.relationships.size).toBe(0);
+
+    const deleteSummary = builder.summary.find((s) => s.description.startsWith('Delete system "Legacy Mainframe"'));
+    expect(deleteSummary?.description).toMatch(/\+1 child\b/);
+    expect(deleteSummary?.description).toMatch(/1 relationship\b/);
+  });
+
+  it("errors on ambiguous relationship deletion, listing candidates, and resolves once named", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.createRelationship({ source: "Booking Engine", target: "Payments", name: "charges via" });
+    builder.createRelationship({ source: "Booking Engine", target: "Payments", name: "refunds via" });
+
+    expect(() =>
+      builder.deleteRelationships([{ source: "Booking Engine", target: "Payments" }]),
+    ).toThrow(ToolError);
+    try {
+      builder.deleteRelationships([{ source: "Booking Engine", target: "Payments" }]);
+      throw new Error("expected deleteRelationships to throw");
+    } catch (err) {
+      expect((err as Error).message).toContain("charges via");
+      expect((err as Error).message).toContain("refunds via");
+    }
+    expect(builder.clone.relationships.size).toBe(2); // failed calls queue nothing
+
+    builder.deleteRelationships([{ source: "Booking Engine", target: "Payments", name: "charges via" }]);
+    expect(builder.clone.relationships.size).toBe(1);
+    expect([...builder.clone.relationships.values()][0]!.name).toBe("refunds via");
+  });
+
+  it("removes a placement via remove_from_view without touching the element or other views", () => {
+    const { ids, ws, bus, view, booking } = seed();
+    bus.dispatch({ type: "placeOnView", viewId: view.id, placement: { elementId: booking.id, x: 0, y: 0 } });
+
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.removeFromView(["Booking Engine"]);
+    bus.dispatch(builder.toBatch("remove")!);
+
+    expect(ws.elements.has(booking.id)).toBe(true);
+    expect(ws.view(view.id).placements.some((p) => p.elementId === booking.id)).toBe(false);
+  });
+
+  it("errors cleanly when a later call references an already-deleted element", () => {
+    const { ids, ws, view } = seed();
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.deleteElements(["Payments"]);
+    expect(() => builder.createRelationship({ source: "Booking Engine", target: "Payments" })).toThrow(ToolError);
+    expect(() => builder.resolveElement("Payments")).toThrow(ToolError);
+  });
+
+  it("applies a mixed delete/create/remove-from-view proposal as one batch and undoes it in a single step", () => {
+    const { ids, ws, bus, view, booking, payments } = seed();
+    bus.dispatch({
+      type: "createRelationship",
+      relationship: { id: ids.next(), sourceId: booking.id, targetId: payments.id, name: "charges via" },
+    });
+    bus.dispatch({ type: "placeOnView", viewId: view.id, placement: { elementId: booking.id, x: 0, y: 0 } });
+
+    const beforeElementCount = ws.elements.size;
+    const beforeRelCount = ws.relationships.size;
+
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+    builder.deleteElements(["Payments"]); // cascades the relationship too
+    builder.removeFromView(["Booking Engine"]);
+    builder.createElement({ name: "New System", kind: "system" });
+
+    bus.dispatch(builder.toBatch("mixed proposal")!);
+
+    expect(ws.elements.has(payments.id)).toBe(false);
+    expect(ws.relationships.size).toBe(0);
+    expect(ws.view(view.id).placements.some((p) => p.elementId === booking.id)).toBe(false);
+    expect([...ws.elements.values()].some((e) => e.name === "New System")).toBe(true);
+
+    bus.undo();
+
+    expect(ws.elements.size).toBe(beforeElementCount);
+    expect(ws.relationships.size).toBe(beforeRelCount);
+    expect(ws.elements.has(payments.id)).toBe(true);
+    expect(ws.view(view.id).placements.some((p) => p.elementId === booking.id)).toBe(true);
+    expect([...ws.elements.values()].some((e) => e.name === "New System")).toBe(false);
+  });
+});
+
 describe("model summary", () => {
   it("is compact and covers elements, relationships, views", () => {
     const { ws } = seed();

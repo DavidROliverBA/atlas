@@ -34,13 +34,20 @@ type Listener = (event: BusEvent) => void;
  * optional property" (commands must stay JSON-serialisable, so `undefined`
  * cannot travel over the wire). Returns the inverse changes.
  */
+/**
+ * Keys where `null` is a real value (explicitly "top level"), not "clear this
+ * optional field". Deleting these instead of assigning null makes the object
+ * invisible to strict `=== null` scans like `Workspace.children(null)`.
+ */
+const NULL_VALUED_KEYS = new Set(["parentId", "scopeId"]);
+
 function applyChanges<T extends object>(target: T, changes: Partial<T>): Partial<T> {
   const inverse: Record<string, unknown> = {};
   const record = target as Record<string, unknown>;
   for (const [key, value] of Object.entries(changes)) {
     if (value === undefined) continue;
     inverse[key] = key in record ? record[key] : null;
-    if (value === null) {
+    if (value === null && !NULL_VALUED_KEYS.has(key)) {
       delete record[key];
     } else {
       record[key] = value;

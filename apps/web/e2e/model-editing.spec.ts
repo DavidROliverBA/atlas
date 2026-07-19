@@ -42,8 +42,10 @@ test.describe("model editing via palette and inspector", () => {
     await page.getByTestId("inspector-technology").fill("Salesforce, MuleSoft");
     await page.getByTestId("inspector-technology").blur();
     await page.getByTestId("inspector-status").selectOption("deprecated");
-    await page.getByTestId("inspector-tags").fill("legacy, saas");
-    await page.getByTestId("inspector-tags").blur();
+    await page.getByTestId("tag-input").fill("legacy");
+    await page.getByTestId("tag-input").press("Enter");
+    await page.getByTestId("tag-input").fill("saas");
+    await page.getByTestId("tag-input").press("Enter");
 
     // Technology shows on the node subtitle.
     await expect(canvasNode(page, "CRM")).toContainText("Salesforce, MuleSoft");
@@ -53,7 +55,9 @@ test.describe("model editing via palette and inspector", () => {
     await canvasNode(page, "CRM").click();
     await expect(page.getByTestId("inspector-technology")).toHaveValue("Salesforce, MuleSoft");
     await expect(page.getByTestId("inspector-status")).toHaveValue("deprecated");
-    await expect(page.getByTestId("inspector-tags")).toHaveValue("legacy, saas");
+    await expect(page.getByTestId("tag-chip")).toHaveCount(2);
+    await expect(page.getByTestId("tag-chip").nth(0)).toContainText("legacy");
+    await expect(page.getByTestId("tag-chip").nth(1)).toContainText("saas");
   });
 
   test("markdown documentation renders in the preview tab", async ({ page }) => {

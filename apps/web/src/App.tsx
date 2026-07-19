@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { useAtlas } from "./store";
 import { Toolbar } from "./components/Toolbar";
 import { Palette } from "./components/Palette";
@@ -11,7 +11,12 @@ import { ConnectionsView } from "./components/ConnectionsView";
 import { AnalysisDrawer } from "./components/AnalysisDrawer";
 import { HelpPanel } from "./components/HelpPanel";
 import { TimelineBar } from "./components/TimelineBar";
-import { ChatPanel } from "./components/ChatPanel";
+import { CommandPalette } from "./components/CommandPalette";
+
+// ChatPanel pulls in @atlas/ai (and, transitively, @anthropic-ai/sdk) — a
+// sizeable dependency only needed once the user opens the AI chat tab, so
+// it's split into its own chunk instead of loading with the initial bundle.
+const ChatPanel = lazy(() => import("./components/ChatPanel").then((m) => ({ default: m.ChatPanel })));
 
 function Toast() {
   const error = useAtlas((s) => s.error);
@@ -56,6 +61,11 @@ export default function App() {
       const meta = e.metaKey || e.ctrlKey;
       const { ws, selection, activeViewId, dispatch, select } = useAtlas.getState();
 
+      if (meta && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        useAtlas.setState((s) => ({ paletteOpen: !s.paletteOpen }));
+        return;
+      }
       if (meta && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) redo();
@@ -123,13 +133,28 @@ export default function App() {
               </button>
             ))}
           </div>
-          <div className="min-h-0 flex-1">{rightTab === "inspector" ? <Inspector /> : <ChatPanel />}</div>
+          <div className="min-h-0 flex-1">
+            {rightTab === "inspector" ? (
+              <Inspector />
+            ) : (
+              <Suspense
+                fallback={
+                  <div className="flex h-full items-center justify-center text-xs text-slate-400" data-testid="chat-panel-loading">
+                    Loading AI assistant…
+                  </div>
+                }
+              >
+                <ChatPanel />
+              </Suspense>
+            )}
+          </div>
         </aside>
       </div>
       <TimelineBar />
       {overlay?.type === "connections" && (
         <ConnectionsView centerId={overlay.id} onClose={() => useAtlas.setState({ overlay: null })} />
       )}
+      <CommandPalette />
       <Toast />
     </div>
   );

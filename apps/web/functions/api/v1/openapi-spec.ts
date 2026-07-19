@@ -128,6 +128,166 @@ const byId = (tag: string, base: string, patchNote = "Set a field to null to cle
   },
 });
 
+/**
+ * Per-command JSON-schema map for the raw command bus (POST /commands and
+ * GET /commands/schema). Shapes are derived straight from
+ * packages/core/src/commands/commands.ts and bus.ts — one entry per
+ * CommandType, reusing the same property fragments as the resource
+ * endpoints above so the two stay in sync by construction.
+ */
+export const commandSchemas = {
+  createElement: {
+    type: "object",
+    required: ["type", "element"],
+    properties: { type: { const: "createElement" }, element: { $ref: "#/components/schemas/Element" } },
+  },
+  updateElement: {
+    type: "object",
+    required: ["type", "id", "changes"],
+    properties: {
+      type: { const: "updateElement" },
+      id: ULID,
+      changes: {
+        type: "object",
+        properties: ElementProps,
+        description: "Partial; only id and kind cannot change. Explicit null clears an optional field.",
+      },
+    },
+  },
+  deleteElement: {
+    type: "object",
+    required: ["type", "id"],
+    properties: { type: { const: "deleteElement" }, id: ULID },
+    description: "Refused while the element still contains children. Cascades relationships and view placements.",
+  },
+  createRelationship: {
+    type: "object",
+    required: ["type", "relationship"],
+    properties: { type: { const: "createRelationship" }, relationship: { $ref: "#/components/schemas/Relationship" } },
+  },
+  updateRelationship: {
+    type: "object",
+    required: ["type", "id", "changes"],
+    properties: {
+      type: { const: "updateRelationship" },
+      id: ULID,
+      changes: { type: "object", properties: RelationshipProps },
+    },
+  },
+  deleteRelationship: {
+    type: "object",
+    required: ["type", "id"],
+    properties: { type: { const: "deleteRelationship" }, id: ULID },
+  },
+  createView: {
+    type: "object",
+    required: ["type", "view"],
+    properties: { type: { const: "createView" }, view: { $ref: "#/components/schemas/View" } },
+  },
+  updateView: {
+    type: "object",
+    required: ["type", "id", "changes"],
+    properties: {
+      type: { const: "updateView" },
+      id: ULID,
+      changes: {
+        type: "object",
+        description: "id and placements cannot change here — use placeOnView/updatePlacement/removeFromView.",
+        properties: {
+          kind: ViewProps.kind,
+          name: ViewProps.name,
+          scopeId: ViewProps.scopeId,
+          description: ViewProps.description,
+          renderMode: ViewProps.renderMode,
+          hiddenRelationshipIds: { type: "array", items: ULID },
+          edgeAnchors: {
+            type: "object",
+            additionalProperties: { type: "object", properties: { source: { type: "string" }, target: { type: "string" } } },
+          },
+        },
+      },
+    },
+  },
+  deleteView: {
+    type: "object",
+    required: ["type", "id"],
+    properties: { type: { const: "deleteView" }, id: ULID },
+  },
+  placeOnView: {
+    type: "object",
+    required: ["type", "viewId", "placement"],
+    properties: {
+      type: { const: "placeOnView" },
+      viewId: ULID,
+      placement: { $ref: "#/components/schemas/Placement" },
+    },
+  },
+  updatePlacement: {
+    type: "object",
+    required: ["type", "viewId", "elementId", "changes"],
+    description: "Move/resize an existing placement. The UI and CLI call this 'move'; the bus type is updatePlacement.",
+    properties: {
+      type: { const: "updatePlacement" },
+      viewId: ULID,
+      elementId: ULID,
+      changes: {
+        type: "object",
+        properties: { x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" } },
+      },
+    },
+  },
+  removeFromView: {
+    type: "object",
+    required: ["type", "viewId", "elementId"],
+    description: "Removes a placement only — never deletes the element from the model.",
+    properties: { type: { const: "removeFromView" }, viewId: ULID, elementId: ULID },
+  },
+  createState: {
+    type: "object",
+    required: ["type", "state"],
+    properties: { type: { const: "createState" }, state: { $ref: "#/components/schemas/NamedState" } },
+  },
+  updateState: {
+    type: "object",
+    required: ["type", "id", "changes"],
+    properties: {
+      type: { const: "updateState" },
+      id: ULID,
+      changes: {
+        type: "object",
+        properties: { name: { type: "string" }, date: { type: "string", format: "date" }, description: { type: "string" } },
+      },
+    },
+  },
+  deleteState: {
+    type: "object",
+    required: ["type", "id"],
+    description: "Cascades: removes the state from any temporal.states / stateOverrides that reference it.",
+    properties: { type: { const: "deleteState" }, id: ULID },
+  },
+  updateWorkspaceMeta: {
+    type: "object",
+    required: ["type", "changes"],
+    properties: {
+      type: { const: "updateWorkspaceMeta" },
+      changes: {
+        type: "object",
+        properties: { name: { type: "string" }, description: { type: "string" }, stencilPacks: stringArray },
+      },
+    },
+  },
+  batch: {
+    type: "object",
+    required: ["type", "commands"],
+    description: "Atomic: all-or-nothing. Undoes as a single step.",
+    properties: {
+      type: { const: "batch" },
+      label: { type: "string" },
+      commands: { type: "array", items: { type: "object", description: "Any command shape from this same map" } },
+    },
+  },
+} as const;
+
 export const openapiSpec = {
   openapi: "3.1.0",
   info: {
@@ -145,6 +305,7 @@ export const openapiSpec = {
     { name: "views", description: "Diagrams: projections of the model with per-view placements" },
     { name: "states", description: "Named temporal states (e.g. Current, Target 2028)" },
     { name: "commands", description: "Raw command batches — full power of the command bus" },
+    { name: "analysis", description: "Read-side graph analysis and exports — lint, ego networks, diagram export" },
   ],
   paths: {
     "/workspace": {
@@ -164,6 +325,24 @@ export const openapiSpec = {
       },
     },
     "/elements/{id}": { parameters: [{ $ref: "#/components/parameters/id" }], ...byId("elements", "Element") },
+    "/elements/{id}/connections": {
+      parameters: [{ $ref: "#/components/parameters/id" }],
+      get: {
+        tags: ["analysis"],
+        summary: "Ego network around an element (impact/connections traversal)",
+        description:
+          "Breadth-first traversal of the whole estate graph outward from this element, the same query the Connections view runs. `depth` bounds how many hops out; `direction` filters which relationship ends are followed.",
+        parameters: [
+          { name: "depth", in: "query", schema: { type: "integer", minimum: 1, maximum: 3, default: 1 }, description: "Hops from the centre element" },
+          { name: "direction", in: "query", schema: { enum: ["both", "out", "in"], default: "both" } },
+        ],
+        responses: {
+          "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/ConnectionsResult" } } } },
+          "400": { $ref: "#/components/responses/ValidationError" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
     "/relationships": crud("relationships", "Relationship", "Accepts `sourceName`/`targetName` instead of ids."),
     "/relationships/{id}": { parameters: [{ $ref: "#/components/parameters/id" }], ...byId("relationships", "Relationship") },
     "/views": crud("views", "View"),
@@ -202,9 +381,53 @@ export const openapiSpec = {
         tags: ["commands"],
         summary: "Apply a batch of raw Atlas commands atomically",
         description:
-          "The escape hatch with the full power of the command bus (createElement, updateElement, deleteElement, createRelationship, createView, placeOnView, updateWorkspaceMeta, batch, …). The batch is atomic: any invalid command rolls the whole batch back with a 400. Returns the resulting workspace snapshot. Note: ids inside commands must be valid new ULIDs you generate, or ids of existing objects.",
+          "The escape hatch with the full power of the command bus (createElement, updateElement, deleteElement, createRelationship, createView, placeOnView, updateWorkspaceMeta, batch, …). The batch is atomic: any invalid command rolls the whole batch back with a 400. Returns the resulting workspace snapshot. Note: ids inside commands must be valid new ULIDs you generate, or ids of existing objects. See `GET /commands/schema` for the exact input shape of every command type.",
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["commands"], properties: { label: { type: "string" }, commands: { type: "array", items: { type: "object", required: ["type"], properties: { type: { type: "string" } }, additionalProperties: true } } } } } } },
         responses: { "200": { description: "Applied", content: { "application/json": { schema: { $ref: "#/components/schemas/WorkspaceData" } } } }, "400": { $ref: "#/components/responses/ValidationError" } },
+      },
+    },
+    "/commands/schema": {
+      get: {
+        tags: ["commands"],
+        summary: "Per-command-type JSON-schema map for POST /commands",
+        description:
+          "One entry per command type the bus supports, keyed by `type` (createElement, updateElement, deleteElement, createRelationship, updateRelationship, deleteRelationship, createView, updateView, deleteView, placeOnView, updatePlacement, removeFromView, createState, updateState, deleteState, updateWorkspaceMeta, batch). Lets AI agents and scripts validate a command batch client-side before posting it.",
+        responses: {
+          "200": {
+            description: "OK",
+            content: { "application/json": { schema: { type: "object", additionalProperties: { type: "object" }, example: { createElement: "{ type, element }" } } } },
+          },
+        },
+      },
+    },
+    "/lint": {
+      get: {
+        tags: ["analysis"],
+        summary: "Consistency report: orphan elements, duplicate names, relationships shown on no view",
+        responses: {
+          "200": { description: "OK", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/LintIssue" } } } } },
+        },
+      },
+    },
+    "/views/{id}/export": {
+      parameters: [{ $ref: "#/components/parameters/id" }],
+      get: {
+        tags: ["analysis"],
+        summary: "Export a view as Mermaid, PlantUML or SVG",
+        description:
+          "Renders the same scene the app's Toolbar export menu produces, straight from the model (no headless browser involved). `format=mermaid`/`plantuml` return a C4-style text diagram; `format=svg` returns a standalone, deterministic SVG.",
+        parameters: [{ name: "format", in: "query", required: true, schema: { enum: ["mermaid", "plantuml", "svg"] } }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "text/plain": { schema: { type: "string" }, example: "C4Context\n  title Ops landscape\n  ...\n" },
+              "image/svg+xml": { schema: { type: "string" } },
+            },
+          },
+          "400": { $ref: "#/components/responses/ValidationError" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
       },
     },
   },
@@ -243,6 +466,37 @@ export const openapiSpec = {
       ViewInput: { type: "object", required: ["kind", "name"], properties: ViewProps },
       NamedState: { type: "object", required: ["id", "name"], properties: { id: ULID, name: { type: "string" }, date: { type: "string", format: "date" }, description: { type: "string" } } },
       NamedStateInput: { type: "object", required: ["name"], properties: { name: { type: "string" }, date: { type: "string", format: "date" }, description: { type: "string" } } },
+      LintIssue: {
+        type: "object",
+        required: ["code", "message", "ids"],
+        properties: {
+          code: { enum: ["orphan-element", "duplicate-name", "unplaced-relationship"] },
+          message: { type: "string" },
+          ids: { type: "array", items: ULID },
+        },
+      },
+      ConnectionsResult: {
+        type: "object",
+        required: ["center", "nodes", "edges"],
+        description: "The ego network around one element: every element and relationship within `depth` hops.",
+        properties: {
+          center: ULID,
+          nodes: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["id", "kind", "name", "hop"],
+              properties: {
+                id: ULID,
+                kind: { enum: ["person", "system", "container", "component", "group"] },
+                name: { type: "string" },
+                hop: { type: "integer", minimum: 0, description: "Distance from the centre element (0 = the centre itself)" },
+              },
+            },
+          },
+          edges: { type: "array", items: { $ref: "#/components/schemas/Relationship" } },
+        },
+      },
       WorkspaceData: {
         type: "object",
         properties: {

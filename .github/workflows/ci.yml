@@ -18,8 +18,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm -r typecheck
+      - name: Typecheck (web functions)
+        run: pnpm --filter @atlas/web run typecheck:functions
       - name: Unit tests (core, stencils, ai, cli, storage)
         run: pnpm -r test --filter '!@atlas/web'
+      - name: Unit tests (web functions)
+        run: pnpm --filter @atlas/web run test:functions
       - name: Install Playwright browsers
         run: pnpm --filter @atlas/web exec playwright install --with-deps chromium
       - name: End-to-end tests
@@ -68,6 +72,7 @@ jobs:
         run: pnpm --filter @atlas/web build
       - name: Deploy to Cloudflare Pages
         if: steps.creds.outputs.present == 'true'
-        run: pnpm --filter @atlas/web exec wrangler pages deploy dist --project-name atlas-modelling --branch main
+        # Project name and build output dir come from apps/web/wrangler.toml.
+        run: pnpm --filter @atlas/web exec wrangler pages deploy --branch main
         env:
           CLOUDFLARE_ACCOUNT_ID: edc54adeeb89138ef55778faa9306d2e

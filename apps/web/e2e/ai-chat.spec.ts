@@ -69,7 +69,32 @@ const CORS_HEADERS = {
   "access-control-allow-headers": "*",
 };
 
-async function stubAnthropic(page: Page): Promise<{ requests: unknown[] }> {
+/**
+ * `delete_elements` cascades (children, their relationships, every view
+ * placement) — see ChangeSetBuilder.deleteElements. "Booking Engine" has 3
+ * container children and touches 6 distinct relationships once its
+ * descendants are included, so this exercises the cascade-count summary.
+ */
+const DELETE_RESPONSE = {
+  id: "msg_stub_3",
+  type: "message",
+  role: "assistant",
+  model: "claude-opus-4-8",
+  stop_reason: "tool_use",
+  stop_sequence: null,
+  usage: { input_tokens: 10, output_tokens: 10 },
+  content: [
+    { type: "text", text: "Removing the Booking Engine and everything it contains." },
+    {
+      type: "tool_use",
+      id: "toolu_del_1",
+      name: "delete_elements",
+      input: { elements: ["Booking Engine"] },
+    },
+  ],
+};
+
+async function stubAnthropic(page: Page, first: unknown = TOOL_USE_RESPONSE): Promise<{ requests: unknown[] }> {
   const state = { calls: 0, requests: [] as unknown[] };
   await page.route("https://api.anthropic.com/**", async (route: Route) => {
     if (route.request().method() === "OPTIONS") {
@@ -81,20 +106,21 @@ async function stubAnthropic(page: Page): Promise<{ requests: unknown[] }> {
     await route.fulfill({
       status: 200,
       headers: { ...CORS_HEADERS, "content-type": "application/json" },
-      body: JSON.stringify(state.calls === 1 ? TOOL_USE_RESPONSE : FINAL_RESPONSE),
+      body: JSON.stringify(state.calls === 1 ? first : FINAL_RESPONSE),
     });
   });
   return state;
 }
 
-async function openChatAndAsk(page: Page): Promise<void> {
+async function openChatAndAsk(
+  page: Page,
+  message = "Add a payments gateway connected to the booking engine over Kafka",
+): Promise<void> {
   await page.getByTestId("right-tab-chat").click();
   await page.getByTestId("chat-settings").click();
   await page.getByTestId("chat-api-key").fill("sk-ant-test-key");
   await page.getByTestId("chat-settings").click();
-  await page
-    .getByTestId("chat-input")
-    .fill("Add a payments gateway connected to the booking engine over Kafka");
+  await page.getByTestId("chat-input").fill(message);
   await page.getByTestId("chat-send").click();
 }
 
@@ -154,5 +180,24 @@ test.describe("AI chat (M7)", () => {
     await page.getByTestId("right-tab-inspector").click();
     await canvasNode(page, "CRM").click();
     await expect(page.getByTestId("inspector-name")).toHaveValue("CRM");
+  });
+
+  test("a delete_elements turn shows cascade counts; Apply removes them as one undo step", async ({ page }) => {
+    await freshApp(page);
+    await stubAnthropic(page, DELETE_RESPONSE);
+    await openChatAndAsk(page, "Delete the booking engine and everything under it");
+
+    const proposal = page.getByTestId("chat-proposal");
+    await expect(proposal).toBeVisible();
+    await expect(proposal).toContainText('Delete system "Booking Engine" (+3 children, 6 relationships)');
+    await expect(canvasNode(page, "Booking Engine")).toBeVisible();
+
+    await page.getByTestId("proposal-apply").click();
+    await expect(canvasNode(page, "Booking Engine")).toHaveCount(0);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(0);
+
+    await page.getByTestId("undo").click();
+    await expect(canvasNode(page, "Booking Engine")).toBeVisible();
+    await expect(page.locator(".react-flow__edge")).toHaveCount(4);
   });
 });

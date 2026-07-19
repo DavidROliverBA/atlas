@@ -15,8 +15,14 @@ import {
   CommandBus,
   Workspace,
   ulidFactory,
+  egoNetwork,
+  lintWorkspace,
+  toMermaidC4,
+  toPlantUmlC4,
+  toSvg,
   type Command,
   type CostEntry,
+  type DirectionFilter,
   type Element,
   type Relationship,
   type NamedState,
@@ -24,12 +30,10 @@ import {
   type View,
 } from "@atlas/core";
 import { RevisionConflictError, SupabaseStorageAdapter } from "@atlas/storage-supabase";
-import { createClient } from "@supabase/supabase-js";
-import { openapiSpec } from "./openapi-spec";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { openapiSpec, commandSchemas } from "./openapi-spec";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../config";
 
-const SUPABASE_URL = "https://gpklzsbyrvwgauvoolsx.supabase.co";
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwa2x6c2J5cnZ3Z2F1dm9vbHN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0Mzg5NTMsImV4cCI6MjEwMDAxNDk1M30.TFnrj83nzCVGidsnTnqW0m9VWFBxbm6V00ehvT_BH0U";
 export const DEFAULT_WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 
 interface Env {
@@ -79,7 +83,7 @@ async function authorised(request: Request, env: Env): Promise<{ ok: boolean; st
 }
 
 /** Create the workspace row on first use so loads never fail on a fresh database. */
-async function ensureWorkspaceRow(db: ReturnType<typeof createClient>): Promise<void> {
+async function ensureWorkspaceRow(db: SupabaseClient): Promise<void> {
   // Cheap single-row existence check — never a full workspace load.
   const { data } = await db.from("workspaces").select("id").eq("id", DEFAULT_WORKSPACE_ID).maybeSingle();
   if (!data) {
@@ -90,9 +94,34 @@ async function ensureWorkspaceRow(db: ReturnType<typeof createClient>): Promise<
 }
 
 /** Load the workspace, creating the default row on first use. */
-async function loadWorkspace(adapter: SupabaseStorageAdapter, db: ReturnType<typeof createClient>): Promise<Workspace> {
+async function loadWorkspace(adapter: SupabaseStorageAdapter, db: SupabaseClient): Promise<Workspace> {
   await ensureWorkspaceRow(db);
   return adapter.load();
+}
+
+/**
+ * Test-only injection seam: the contract-test suite swaps this in to run the
+ * router against an in-memory fake instead of the network. Production code
+ * never touches it — it stays `undefined` and `makeSupabaseClient` always
+ * takes the `createClient` branch below, so runtime behaviour is unchanged.
+ */
+let supabaseClientFactory: ((env: Env) => SupabaseClient) | undefined;
+
+/** @internal Test-only — replace (or clear, with `undefined`) the Supabase client factory. */
+export function __setSupabaseClientFactory(factory: ((env: Env) => SupabaseClient) | undefined): void {
+  supabaseClientFactory = factory;
+}
+
+function makeSupabaseClient(env: Env, serviceRoleKey: string): SupabaseClient {
+  if (supabaseClientFactory) return supabaseClientFactory(env);
+  // Every database request gets a hard timeout: a saturated pool must fail
+  // fast (bounded function lifetime), never hang holding connections open.
+  return createClient(SUPABASE_URL, serviceRoleKey, {
+    global: {
+      fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+        fetch(input, { ...init, signal: AbortSignal.timeout(10_000) }),
+    },
+  });
 }
 
 type Mutator = (ws: Workspace, bus: CommandBus, nextId: () => Ulid) => unknown;
@@ -128,14 +157,7 @@ export async function onRequest(context: Ctx): Promise<Response> {
 
   const workspaceId =
     new URL(request.url).searchParams.get("workspace_id") ?? DEFAULT_WORKSPACE_ID;
-  // Every database request gets a hard timeout: a saturated pool must fail
-  // fast (bounded function lifetime), never hang holding connections open.
-  const db = createClient(SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-    global: {
-      fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-        fetch(input, { ...init, signal: AbortSignal.timeout(10_000) }),
-    },
-  });
+  const db = makeSupabaseClient(env, env.SUPABASE_SERVICE_ROLE_KEY);
   const adapter = new SupabaseStorageAdapter(db, workspaceId);
 
   const body = async <T>(): Promise<T> => (await request.json()) as T;
@@ -199,6 +221,18 @@ export async function onRequest(context: Ctx): Promise<Response> {
       return json(200, ws.toData());
     }
 
+    // ---- lint (read-side analysis) --------------------------------------
+    if (resource === "lint" && method === "GET") {
+      const ws = await loadWorkspace(adapter, db);
+      return json(200, lintWorkspace(ws));
+    }
+
+    // ---- commands schema (read-side; must precede the POST /commands check
+    //      only in the sense that it's a distinct method+path, order-agnostic) --
+    if (resource === "commands" && id === "schema" && method === "GET") {
+      return json(200, commandSchemas);
+    }
+
     // ---- elements -------------------------------------------------------
     if (resource === "elements") {
       if (method === "GET" && id === undefined) {
@@ -209,7 +243,33 @@ export async function onRequest(context: Ctx): Promise<Response> {
         );
         return json(200, items);
       }
-      if (method === "GET" && id) {
+      if (method === "GET" && id && sub === "connections") {
+        const ws = await loadWorkspace(adapter, db);
+        if (!ws.elements.has(id)) return err(404, `No element ${id}`);
+
+        const params = new URL(request.url).searchParams;
+        const depthParam = params.get("depth");
+        let depth = 1;
+        if (depthParam !== null) {
+          depth = Number(depthParam);
+          if (!Number.isInteger(depth) || depth < 1 || depth > 3) {
+            return err(400, "depth must be an integer between 1 and 3");
+          }
+        }
+        const directionParam = params.get("direction") ?? "both";
+        if (directionParam !== "both" && directionParam !== "out" && directionParam !== "in") {
+          return err(400, `Unknown direction "${directionParam}" — expected both, out or in`);
+        }
+        const direction = directionParam as DirectionFilter;
+
+        const network = egoNetwork(ws, id, { depth, direction });
+        const nodes = [...network.elements].map(([elId, hop]) => {
+          const el = ws.element(elId);
+          return { id: el.id, kind: el.kind, name: el.name, hop };
+        });
+        return json(200, { center: id, nodes, edges: network.relationships });
+      }
+      if (method === "GET" && id && sub === undefined) {
         const ws = await loadWorkspace(adapter, db);
         const el = ws.elements.get(id);
         return el ? json(200, el) : err(404, `No element ${id}`);
@@ -287,7 +347,23 @@ export async function onRequest(context: Ctx): Promise<Response> {
         const ws = await loadWorkspace(adapter, db);
         return json(200, ws.toData().views);
       }
-      if (method === "GET" && id) {
+      if (method === "GET" && id && sub === "export") {
+        const ws = await loadWorkspace(adapter, db);
+        if (!ws.views.has(id)) return err(404, `No view ${id}`);
+        const format = new URL(request.url).searchParams.get("format");
+        const headers = { "access-control-allow-origin": "*" };
+        if (format === "mermaid") {
+          return new Response(toMermaidC4(ws, id), { status: 200, headers: { ...headers, "content-type": "text/plain; charset=utf-8" } });
+        }
+        if (format === "plantuml") {
+          return new Response(toPlantUmlC4(ws, id), { status: 200, headers: { ...headers, "content-type": "text/plain; charset=utf-8" } });
+        }
+        if (format === "svg") {
+          return new Response(toSvg(ws, id), { status: 200, headers: { ...headers, "content-type": "image/svg+xml" } });
+        }
+        return err(400, `Unknown format "${format}" — expected mermaid, plantuml or svg`);
+      }
+      if (method === "GET" && id && sub === undefined) {
         const ws = await loadWorkspace(adapter, db);
         const view = ws.views.get(id);
         return view ? json(200, view) : err(404, `No view ${id}`);

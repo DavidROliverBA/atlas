@@ -4,6 +4,9 @@ import type { Criticality, Element, Lifecycle, Relationship, Temporal, Ulid } fr
 import { KIND_LABELS } from "../stencils";
 import { stencilRegistry, useAtlas } from "../store";
 import { CostsEditor } from "./CostsEditor";
+import { LinksEditor } from "./LinksEditor";
+import { StateOverridesEditor } from "./StateOverridesEditor";
+import { TagsEditor } from "./TagsEditor";
 
 const STATUSES: Lifecycle[] = ["proposed", "planned", "live", "deprecated", "decommissioned"];
 const CRITICALITIES: Criticality[] = ["low", "medium", "high", "critical"];
@@ -171,14 +174,8 @@ function ElementInspector({ element }: { element: Element }) {
         />
       </Field>
 
-      <Field label="Tags (comma-separated)">
-        <input
-          key={element.id}
-          data-testid="inspector-tags"
-          className={inputClass}
-          defaultValue={element.tags?.join(", ") ?? ""}
-          onBlur={(e) => update({ tags: listFrom(e.target.value) })}
-        />
+      <Field label="Tags">
+        <TagsEditor key={element.id} tags={element.tags} onChange={(tags) => update({ tags })} />
       </Field>
 
       <Field label="Box colour">
@@ -209,7 +206,9 @@ function ElementInspector({ element }: { element: Element }) {
         />
       </Field>
 
-      <CostsEditor key={element.id} element={element} />
+      <CostsEditor key={`costs-${element.id}`} element={element} />
+
+      {ws.states.size > 0 && <StateOverridesEditor key={`overrides-${element.id}`} element={element} />}
 
       {element.stencil && <StencilAttributes element={element} />}
 
@@ -233,7 +232,7 @@ function ElementInspector({ element }: { element: Element }) {
       </div>
 
       <Field label="Links">
-        <LinksEditor element={element} />
+        <LinksEditor key={element.id} element={element} />
       </Field>
 
       <div>
@@ -442,58 +441,6 @@ function TemporalEditor({
   );
 }
 
-function LinksEditor({ element }: { element: Element }) {
-  const dispatch = useAtlas((s) => s.dispatch);
-  const [title, setTitle] = useState("");
-  const [url, setUrl] = useState("");
-  const links = element.links ?? [];
-  const save = (next: typeof links) =>
-    dispatch({ type: "updateElement", id: element.id, changes: { links: (next.length ? next : null) as never } });
-  return (
-    <div className="flex flex-col gap-1">
-      {links.map((l, i) => (
-        <div key={i} className="flex items-center gap-1 text-xs">
-          <a href={l.url} target="_blank" rel="noreferrer" className="truncate text-blue-600 underline">
-            {l.title}
-          </a>
-          <button
-            title="Remove link"
-            onClick={() => save(links.filter((_, j) => j !== i))}
-            className="ml-auto text-slate-400 hover:text-red-500"
-          >
-            ✕
-          </button>
-        </div>
-      ))}
-      <div className="flex gap-1">
-        <input
-          className={`${inputClass} text-xs`}
-          placeholder="Title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        <input
-          className={`${inputClass} text-xs`}
-          placeholder="https://…"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-        />
-        <button
-          className="rounded-md bg-slate-800 px-2 text-xs text-white disabled:opacity-40"
-          disabled={!title.trim() || !/^https?:\/\//.test(url)}
-          onClick={() => {
-            save([...links, { title: title.trim(), url: url.trim() }]);
-            setTitle("");
-            setUrl("");
-          }}
-        >
-          Add
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function RelationshipInspector({ relationship }: { relationship: Relationship }) {
   const ws = useAtlas((s) => s.ws);
   const dispatch = useAtlas((s) => s.dispatch);
@@ -507,6 +454,24 @@ function RelationshipInspector({ relationship }: { relationship: Relationship })
   const target = ws.elements.get(relationship.targetId);
   const activeView = ws.views.get(activeViewId);
   const pinnedRoute = activeView?.edgeAnchors?.[relationship.id];
+
+  const bothEndpointsPlaced =
+    activeView?.placements.some((p) => p.elementId === relationship.sourceId) &&
+    activeView?.placements.some((p) => p.elementId === relationship.targetId);
+  const canToggleVisibility = Boolean(activeView && bothEndpointsPlaced);
+  const isHiddenOnView = activeView?.hiddenRelationshipIds?.includes(relationship.id) ?? false;
+  const toggleVisibility = () => {
+    if (!activeView) return;
+    const current = activeView.hiddenRelationshipIds ?? [];
+    const next = isHiddenOnView
+      ? current.filter((id) => id !== relationship.id)
+      : [...current, relationship.id];
+    dispatch({
+      type: "updateView",
+      id: activeView.id,
+      changes: { hiddenRelationshipIds: (next.length ? next : null) as never },
+    });
+  };
 
   return (
     <div className="flex flex-col gap-3" data-testid="inspector-relationship">
@@ -551,13 +516,8 @@ function RelationshipInspector({ relationship }: { relationship: Relationship })
           <option value="bidirectional">bidirectional</option>
         </select>
       </Field>
-      <Field label="Tags (comma-separated)">
-        <input
-          key={relationship.id}
-          className={inputClass}
-          defaultValue={relationship.tags?.join(", ") ?? ""}
-          onBlur={(e) => update({ tags: listFrom(e.target.value) })}
-        />
+      <Field label="Tags">
+        <TagsEditor key={relationship.id} tags={relationship.tags} onChange={(tags) => update({ tags })} />
       </Field>
       <Field label="Time (validity & states)">
         <TemporalEditor
@@ -585,6 +545,32 @@ function RelationshipInspector({ relationship }: { relationship: Relationship })
           )}
         </div>
       </Field>
+      {canToggleVisibility && (
+        <Field label="Visibility">
+          {isHiddenOnView ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-orange-600">Hidden on this view</span>
+              <button
+                type="button"
+                data-testid="rel-show"
+                onClick={toggleVisibility}
+                className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+              >
+                Show on this view
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              data-testid="rel-hide"
+              onClick={toggleVisibility}
+              className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+            >
+              Hide on this view
+            </button>
+          )}
+        </Field>
+      )}
       {pinnedRoute && activeView && (
         <button
           data-testid="reset-routing"

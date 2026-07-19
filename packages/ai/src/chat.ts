@@ -23,6 +23,7 @@ Rules:
 - Refer to existing elements by their exact names. Use query_model when unsure what exists.
 - When creating elements that should be visible, also place them on a view (place_on_view defaults to the user's current view).
 - Costs for TCO live on elements as cost entries (set_costs). Recurring entries normalise to annual; one-off entries amortise straight-line (default 3 years). Costs roll up through containment, so put a cost on the element that actually incurs it, not on its parent as well.
+- delete_elements and delete_relationships remove things from the model entirely (and cascade — deleting an element takes its children, their relationships, and every view placement with it); remove_from_view only takes an element off one diagram and leaves the model untouched. Use the one the user actually means, and for a delete with a large blast radius confirm intent with the user rather than guessing.
 - Keep replies short and factual. Summarise what you queued; do not claim changes are applied.`;
 
 export const AI_TOOLS: Anthropic.Tool[] = [
@@ -191,6 +192,74 @@ export const AI_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "delete_elements",
+    description:
+      "Queue deletion of one or more elements, referenced by name. WARNING: this cascades — deleting an element also deletes everything it contains (children, grandchildren, ...), every relationship touching any of them, and removes all their placements from every view. For anything beyond a single leaf element, confirm the blast radius with the user rather than guessing what they meant; use query_model first if you are not sure what a deletion would take with it.",
+    input_schema: {
+      type: "object",
+      required: ["elements"],
+      properties: {
+        elements: { type: "array", items: { type: "string" } },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "delete_relationships",
+    description:
+      "Queue deletion of one or more relationships, each identified by its source and target element names. If more than one relationship exists between the same pair, pass name (the verb phrase) to pick the right one; if it's still ambiguous you'll get an error listing the candidates to choose from.",
+    input_schema: {
+      type: "object",
+      required: ["relationships"],
+      properties: {
+        relationships: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["source", "target"],
+            properties: {
+              source: { type: "string" },
+              target: { type: "string" },
+              name: {
+                type: "string",
+                description: "Verb phrase to disambiguate when several relationships exist between the same pair",
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "remove_from_view",
+    description:
+      "Queue removal of one or more elements' placements from a view — the elements stay in the model (and on any other views); this only changes this one diagram. Omit view to use the user's currently open view. Use delete_elements instead if the user wants the element gone from the model entirely.",
+    input_schema: {
+      type: "object",
+      required: ["elements"],
+      properties: {
+        elements: { type: "array", items: { type: "string" } },
+        view: { type: "string", description: "View name; defaults to the current view" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "delete_view",
+    description:
+      "Queue deletion of an entire view (diagram), referenced by name. The elements and relationships shown on it are untouched — only the view and its placements are removed.",
+    input_schema: {
+      type: "object",
+      required: ["view"],
+      properties: {
+        view: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "set_temporal_state",
     description:
       "Queue temporal validity on an element: validFrom/validTo ISO dates (YYYY-MM-DD) and/or membership in named states.",
@@ -275,6 +344,22 @@ function executeTool(
       builder.setTemporal(input as never);
       return "Temporal change queued.";
     }
+    case "delete_elements": {
+      builder.deleteElements(input["elements"] as string[]);
+      return "Deletion queued.";
+    }
+    case "delete_relationships": {
+      builder.deleteRelationships(input["relationships"] as never);
+      return "Deletion queued.";
+    }
+    case "remove_from_view": {
+      const view = builder.removeFromView(input["elements"] as string[], input["view"] as string | undefined);
+      return `Removed from "${view.name}" (elements remain in the model).`;
+    }
+    case "delete_view": {
+      const view = builder.deleteView(input["view"] as string);
+      return `Queued deletion of view "${view.name}".`;
+    }
     default:
       return `Unknown tool: ${name}`;
   }
@@ -302,6 +387,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   ];
 
   let text = "";
+  let lastStopReason: Anthropic.Message["stop_reason"] = null;
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const response = await client.messages.create({
       model: input.model ?? DEFAULT_MODEL,
@@ -310,6 +396,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
       tools: AI_TOOLS,
       messages,
     });
+    lastStopReason = response.stop_reason;
 
     const toolUses = response.content.filter(
       (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
@@ -339,8 +426,17 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     messages.push({ role: "user", content: results });
   }
 
+  // The loop only runs out of iterations while the model still wanted to call
+  // tools (stop_reason === "tool_use" on the final round) — surface that so
+  // the proposal isn't mistaken for a finished answer.
+  const cappedNote =
+    lastStopReason === "tool_use"
+      ? `(Stopped after ${MAX_TOOL_ITERATIONS} tool rounds — the proposal below may be incomplete; ask me to continue.)`
+      : "";
+  const finalText = [text, cappedNote].filter(Boolean).join("\n\n");
+
   return {
-    text: text || "(no reply)",
+    text: finalText || "(no reply)",
     changeSet: builder.toBatch("AI proposal"),
     summary: builder.summary,
   };

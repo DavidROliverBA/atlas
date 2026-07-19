@@ -205,6 +205,131 @@ export class ChangeSetBuilder {
     return view;
   }
 
+  /** All descendants of `id` (recursive), in preorder — a node always precedes its own descendants. */
+  private descendantsOf(id: Ulid): Element[] {
+    const out: Element[] = [];
+    const walk = (parentId: Ulid): void => {
+      for (const child of this.clone.children(parentId)) {
+        out.push(child);
+        walk(child.id);
+      }
+    };
+    walk(id);
+    return out;
+  }
+
+  /**
+   * Queue deletion of one or more elements, cascading to descendants (the
+   * command bus itself refuses to delete a container that still has
+   * children, so we delete the subtree bottom-up), relationships touching
+   * any of them, and view placements. One summary item per requested
+   * element, with cascade counts computed from the clone before dispatch.
+   */
+  deleteElements(names: string[]): void {
+    const targets = names.map((name) => this.resolveElement(name));
+    for (const el of targets) {
+      if (!this.clone.elements.has(el.id)) continue; // already removed by an earlier cascade in this call
+      const descendants = this.descendantsOf(el.id);
+      const relIds = new Set<Ulid>();
+      for (const node of [el, ...descendants]) {
+        for (const rel of this.clone.relationshipsOf(node.id)) relIds.add(rel.id);
+      }
+      // Delete leaves first (reverse preorder is a valid bottom-up order for a tree).
+      for (const child of [...descendants].reverse()) {
+        this.push({ type: "deleteElement", id: child.id });
+      }
+      const parts: string[] = [];
+      if (descendants.length) {
+        parts.push(`+${descendants.length} child${descendants.length === 1 ? "" : "ren"}`);
+      }
+      if (relIds.size) {
+        parts.push(`${relIds.size} relationship${relIds.size === 1 ? "" : "s"}`);
+      }
+      this.push(
+        { type: "deleteElement", id: el.id },
+        {
+          kind: "element",
+          description: `Delete ${el.kind} "${el.name}"${parts.length ? ` (${parts.join(", ")})` : ""}`,
+        },
+      );
+    }
+  }
+
+  /**
+   * Queue deletion of relationships identified by endpoint names. When
+   * several relationships share the same endpoints, `name` (the verb
+   * phrase) disambiguates; still-ambiguous cases error with candidates
+   * listed rather than guessing.
+   */
+  deleteRelationships(inputs: Array<{ source: string; target: string; name?: string }>): void {
+    for (const input of inputs) {
+      const source = this.resolveElement(input.source);
+      const target = this.resolveElement(input.target);
+      const candidates = [...this.clone.relationships.values()].filter(
+        (r) => r.sourceId === source.id && r.targetId === target.id,
+      );
+      const describeCandidates = () =>
+        candidates.map((r) => `"${r.name ?? "(unnamed)"}"`).join(", ");
+
+      let rel: Relationship;
+      if (candidates.length === 0) {
+        throw new ToolError(`No relationship from "${source.name}" to "${target.name}".`);
+      } else if (candidates.length === 1) {
+        rel = candidates[0]!;
+      } else if (input.name) {
+        const needle = input.name.trim().toLowerCase();
+        const named = candidates.filter((r) => r.name?.toLowerCase() === needle);
+        if (named.length === 0) {
+          throw new ToolError(
+            `No relationship named "${input.name}" from "${source.name}" to "${target.name}". Candidates: ${describeCandidates()}.`,
+          );
+        }
+        if (named.length > 1) {
+          throw new ToolError(
+            `${named.length} relationships named "${input.name}" from "${source.name}" to "${target.name}" — cannot disambiguate further.`,
+          );
+        }
+        rel = named[0]!;
+      } else {
+        throw new ToolError(
+          `${candidates.length} relationships from "${source.name}" to "${target.name}" — pass name to disambiguate. Candidates: ${describeCandidates()}.`,
+        );
+      }
+
+      this.push(
+        { type: "deleteRelationship", id: rel.id },
+        {
+          kind: "relationship",
+          description: `Delete relationship ${source.name} → ${target.name}${rel.name ? ` (${rel.name})` : ""}`,
+        },
+      );
+    }
+  }
+
+  /** Queue removal of elements' placements from a view; the elements stay in the model. */
+  removeFromView(elementNames: string[], viewName?: string): View {
+    const view = this.resolveView(viewName);
+    for (const name of elementNames) {
+      const el = this.resolveElement(name);
+      if (!view.placements.some((p) => p.elementId === el.id)) continue; // not there — not an error
+      this.push(
+        { type: "removeFromView", viewId: view.id, elementId: el.id },
+        { kind: "placement", description: `Remove "${el.name}" from "${view.name}"` },
+      );
+    }
+    return view;
+  }
+
+  /** Queue deletion of an entire view; elements and relationships shown on it are untouched. */
+  deleteView(name: string): View {
+    const view = this.resolveView(name);
+    this.push(
+      { type: "deleteView", id: view.id },
+      { kind: "view", description: `Delete view "${view.name}"` },
+    );
+    return view;
+  }
+
   setTemporal(input: {
     element: string;
     validFrom?: string;

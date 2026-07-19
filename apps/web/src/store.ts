@@ -95,6 +95,8 @@ export interface AtlasStore {
   source: "local" | "db";
   /** Token used for database mode (cached at connect time). */
   dbToken: string | null;
+  /** Whether the ⌘K command palette is open. */
+  paletteOpen: boolean;
   /** Switch to the shared database workspace (loads it via the API). */
   connectDb(): Promise<void>;
   /** Return to the browser-local workspace. */
@@ -157,6 +159,7 @@ export const useAtlas = create<AtlasStore>((set, get) => {
     costOverlay: false,
     source: "local",
     dbToken: null,
+    paletteOpen: false,
 
     async connectDb() {
       const token = await apiToken();

@@ -4,11 +4,19 @@
  * view and applies the result as one undoable batch of placement updates.
  */
 
-import ELK from "elkjs/lib/elk.bundled.js";
 import type { Command, Ulid, Workspace } from "@atlas/core";
 import { DEFAULT_H, DEFAULT_W, GRID } from "./store";
 
-const elk = new ELK();
+// elkjs is a sizeable dependency only needed when the user actually asks for
+// auto-layout, so it's loaded on first use instead of on the initial bundle.
+type Elk = InstanceType<typeof import("elkjs/lib/elk.bundled.js").default>;
+let elkPromise: Promise<Elk> | undefined;
+async function loadElk(): Promise<Elk> {
+  if (!elkPromise) {
+    elkPromise = import("elkjs/lib/elk.bundled.js").then((m) => new m.default());
+  }
+  return elkPromise;
+}
 
 export async function autoLayoutCommands(ws: Workspace, viewId: Ulid): Promise<Command | null> {
   const view = ws.views.get(viewId);
@@ -26,6 +34,7 @@ export async function autoLayoutCommands(ws: Workspace, viewId: Ulid): Promise<C
     .filter((r) => placed.has(r.sourceId) && placed.has(r.targetId))
     .map((r) => ({ id: r.id, sources: [r.sourceId], targets: [r.targetId] }));
 
+  const elk = await loadElk();
   const result = await elk.layout({
     id: "root",
     layoutOptions: {

@@ -1,0 +1,11 @@
+# Cloudflare Pages project config for atlas-modelling.
+#
+# Captures the project identity and build output so `deploy` (package.json)
+# and CI's deploy job don't have to repeat `--project-name`/the output
+# directory as inline flags — only deployment-specific flags (--branch,
+# --commit-dirty) stay on the command line. No secrets here: auth comes from
+# the CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID environment variables at
+# deploy time, never from this file.
+name = "atlas-modelling"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-07-19"

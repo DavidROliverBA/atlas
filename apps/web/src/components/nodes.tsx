@@ -1,9 +1,15 @@
-import { useMemo } from "react";
-import { Handle, type NodeProps, type Node } from "@xyflow/react";
+import { useCallback, useMemo } from "react";
+import { Handle, NodeResizer, type NodeProps, type Node } from "@xyflow/react";
 import { elementAnnual, type Element, type TemporalContext, type Ulid, type Workspace } from "@atlas/core";
 import { KIND_LABELS, stencilFor } from "../stencils";
-import { stencilRegistry, useAtlas } from "../store";
+import { GRID, stencilRegistry, useAtlas } from "../store";
 import { PORTS } from "../ports";
+
+/** Resize floors, px (element vs. group). Aspect ratio is left free. */
+const ELEMENT_MIN_W = 120;
+const ELEMENT_MIN_H = 60;
+const GROUP_MIN_W = 200;
+const GROUP_MIN_H = 120;
 
 /** Mix a #rrggbb colour towards white (amount 0..1) for a soft box fill. */
 function tint(hex: string, amount: number): string {
@@ -87,8 +93,36 @@ export type AtlasNodeData = {
   diffStatus?: "added" | "removed" | "changed";
   /** Set when the tag colour overlay matches this element. */
   tagged?: boolean;
+  /** Set while a dragged node's centre is hovering this group (drop target). */
+  dropHighlight?: boolean;
 };
 export type AtlasNode = Node<AtlasNodeData, "atlas" | "atlasGroup">;
+
+/**
+ * Persist a resize as a placement update (grid units, same command family as
+ * drag-move so undo/redo works). Also carries x/y since resizing from a
+ * top/left handle shifts the node's origin.
+ */
+function useResizeEndHandler(elementId: Ulid) {
+  const dispatch = useAtlas((s) => s.dispatch);
+  const activeViewId = useAtlas((s) => s.activeViewId);
+  return useCallback(
+    (_event: unknown, params: { x: number; y: number; width: number; height: number }) => {
+      dispatch({
+        type: "updatePlacement",
+        viewId: activeViewId,
+        elementId,
+        changes: {
+          x: Math.round(params.x / GRID),
+          y: Math.round(params.y / GRID),
+          width: Math.round(params.width / GRID),
+          height: Math.round(params.height / GRID),
+        },
+      });
+    },
+    [dispatch, activeViewId, elementId],
+  );
+}
 
 const DIFF_RING: Record<NonNullable<AtlasNodeData["diffStatus"]>, string> = {
   added: "ring-2 ring-emerald-500 ring-offset-2",
@@ -122,89 +156,115 @@ export function AtlasElementNode({ data, selected }: NodeProps<AtlasNode>) {
     return { tier, label: `${compactGbp.format(rolledUp)}/yr` };
   }, [costOverlay, ws, rev, temporal, element.id]);
 
+  const onResizeEnd = useResizeEndHandler(element.id);
+
   return (
-    <div
-      data-testid="canvas-node"
-      data-elname={element.name}
-      data-diff={diffStatus}
-      data-tagged={tagged ? "true" : undefined}
-      style={customStyle}
-      className={`atlas-fade-in relative h-full w-full rounded-xl border-2 px-3 py-2 shadow-sm transition-shadow ${stencil.nodeClass} ${
-        selected
-          ? "ring-2 ring-blue-500 ring-offset-2"
-          : diffStatus
-            ? DIFF_RING[diffStatus]
-            : tagged
-              ? "ring-2 ring-fuchsia-500 ring-offset-2"
-              : ""
-      }`}
-    >
-      {diffStatus && (
-        <span
-          className={`absolute -top-2 right-2 rounded-full px-1.5 text-[9px] font-semibold uppercase tracking-wide text-white ${DIFF_BADGE[diffStatus].cls}`}
-        >
-          {DIFF_BADGE[diffStatus].label}
-        </span>
-      )}
-      {costBadge && (
-        <span
-          data-testid="cost-badge"
-          className={`absolute -bottom-2 right-2 rounded-full px-1.5 text-[9px] font-semibold tabular-nums text-white ${
-            costBadge.tier === "red" ? "bg-red-600" : "bg-amber-500"
-          }`}
-        >
-          {costBadge.label}
-        </span>
-      )}
-      <NodePorts />
-      <div className="flex items-start justify-between gap-1">
-        {element.stencil && (
+    <>
+      <NodeResizer
+        isVisible={selected}
+        minWidth={ELEMENT_MIN_W}
+        minHeight={ELEMENT_MIN_H}
+        keepAspectRatio={false}
+        onResizeEnd={onResizeEnd}
+      />
+      <div
+        data-testid="canvas-node"
+        data-elname={element.name}
+        data-diff={diffStatus}
+        data-tagged={tagged ? "true" : undefined}
+        style={customStyle}
+        className={`atlas-fade-in relative h-full w-full rounded-xl border-2 px-3 py-2 shadow-sm transition-shadow ${stencil.nodeClass} ${
+          selected
+            ? "ring-2 ring-blue-500 ring-offset-2"
+            : diffStatus
+              ? DIFF_RING[diffStatus]
+              : tagged
+                ? "ring-2 ring-fuchsia-500 ring-offset-2"
+                : ""
+        }`}
+      >
+        {diffStatus && (
           <span
-            data-testid="stencil-symbol"
-            className="mt-0.5 h-6 w-6 shrink-0 [&_svg]:h-full [&_svg]:w-full"
-            dangerouslySetInnerHTML={{
-              __html: stencilRegistry.stencil(element.stencil)?.symbol2d ?? "",
-            }}
-          />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold leading-tight">{element.name}</div>
-          <div className="text-[10px] uppercase tracking-wide opacity-60">
-            {stencilRegistry.stencil(element.stencil ?? { pack: "", stencil: "" })?.name ??
-              KIND_LABELS[element.kind]}
-            {element.technology?.length ? ` · ${element.technology.join(", ")}` : ""}
-          </div>
-        </div>
-        {drillable && (
-          <span
-            title="Double-click to zoom in"
-            data-testid="drill-affordance"
-            className="mt-0.5 shrink-0 rounded-full bg-white/70 px-1 text-[10px] leading-4 shadow-sm"
+            className={`absolute -top-2 right-2 rounded-full px-1.5 text-[9px] font-semibold uppercase tracking-wide text-white ${DIFF_BADGE[diffStatus].cls}`}
           >
-            🔍
+            {DIFF_BADGE[diffStatus].label}
           </span>
         )}
+        {costBadge && (
+          <span
+            data-testid="cost-badge"
+            className={`absolute -bottom-2 right-2 rounded-full px-1.5 text-[9px] font-semibold tabular-nums text-white ${
+              costBadge.tier === "red" ? "bg-red-600" : "bg-amber-500"
+            }`}
+          >
+            {costBadge.label}
+          </span>
+        )}
+        <NodePorts />
+        <div className="flex items-start justify-between gap-1">
+          {element.stencil && (
+            <span
+              data-testid="stencil-symbol"
+              className="mt-0.5 h-6 w-6 shrink-0 [&_svg]:h-full [&_svg]:w-full"
+              dangerouslySetInnerHTML={{
+                __html: stencilRegistry.stencil(element.stencil)?.symbol2d ?? "",
+              }}
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold leading-tight">{element.name}</div>
+            <div className="text-[10px] uppercase tracking-wide opacity-60">
+              {stencilRegistry.stencil(element.stencil ?? { pack: "", stencil: "" })?.name ??
+                KIND_LABELS[element.kind]}
+              {element.technology?.length ? ` · ${element.technology.join(", ")}` : ""}
+            </div>
+          </div>
+          {drillable && (
+            <span
+              title="Double-click to zoom in"
+              data-testid="drill-affordance"
+              className="mt-0.5 shrink-0 rounded-full bg-white/70 px-1 text-[10px] leading-4 shadow-sm"
+            >
+              🔍
+            </span>
+          )}
+        </div>
+        {element.description && (
+          <div className="mt-1 line-clamp-2 text-xs opacity-80">{element.description}</div>
+        )}
       </div>
-      {element.description && (
-        <div className="mt-1 line-clamp-2 text-xs opacity-80">{element.description}</div>
-      )}
-    </div>
+    </>
   );
 }
 
 export function AtlasGroupNode({ data, selected }: NodeProps<AtlasNode>) {
-  const { element } = data;
+  const { element, dropHighlight } = data;
   const stencil = stencilFor("group");
+  const onResizeEnd = useResizeEndHandler(element.id);
   return (
-    <div
-      data-testid="canvas-node"
-      data-elname={element.name}
-      className={`h-full w-full rounded-2xl border-2 px-3 py-1 ${stencil.nodeClass} ${
-        selected ? "ring-2 ring-blue-500 ring-offset-2" : ""
-      }`}
-    >
-      <div className="text-xs font-semibold opacity-70">{element.name}</div>
-    </div>
+    <>
+      <NodeResizer
+        isVisible={selected}
+        minWidth={GROUP_MIN_W}
+        minHeight={GROUP_MIN_H}
+        keepAspectRatio={false}
+        onResizeEnd={onResizeEnd}
+      />
+      <div
+        data-testid="canvas-node"
+        data-elname={element.name}
+        data-drop-highlight={dropHighlight ? "true" : undefined}
+        className={`h-full w-full rounded-2xl border-2 px-3 py-1 transition-colors ${stencil.nodeClass} ${
+          selected
+            ? "ring-2 ring-blue-500 ring-offset-2"
+            : dropHighlight
+              ? "border-emerald-500 ring-2 ring-emerald-400 ring-offset-2"
+              : ""
+        }`}
+      >
+        <div className="text-xs font-semibold opacity-70">{element.name}</div>
+      </div>
+    </>
   );
 }
 

@@ -53,6 +53,10 @@ in-app AI. That means the metamodel is enforced server-side and violations retur
 | `POST /views/{id}/placements`, `PATCH/DELETE /views/{id}/placements/{elementId}` | Put/move/remove elements on a diagram (grid units, 1 = 20px) |
 | `GET/POST /states`, `PATCH/DELETE /states/{id}` | Named temporal states |
 | `POST /commands` | Atomic batch of raw commands — full command-bus power |
+| `GET /commands/schema` | Per-command-type JSON-schema map, for validating a batch before posting it |
+| `GET /lint` | Consistency report: orphans, duplicate names, unplaced relationships |
+| `GET /elements/{id}/connections` | Ego network around an element (depth/direction-bounded graph traversal) |
+| `GET /views/{id}/export` | Export a view as Mermaid, PlantUML or SVG |
 
 Convenience for humans and AI agents: creation endpoints accept `parentName`,
 `sourceName`/`targetName`, and `elementName` in place of ids — resolved against
@@ -140,6 +144,75 @@ curl -s "${auth[@]}" -X PATCH $API/elements/$ID -d '{
 Unlike the resource endpoints, you supply ULIDs yourself here (26 chars,
 Crockford base32). The response is the resulting workspace snapshot.
 
+## Read-side analysis
+
+Everything below is derived from the model, never drawn or computed by hand — the
+same `@atlas/core` graph/export functions the app's Analysis drawer, Connections
+view and Toolbar export menu call, exposed read-only over the API.
+
+### Consistency report — `GET /lint`
+
+Orphan elements (in the model but on no view), duplicate names sharing a scope,
+and relationships that appear on no view:
+
+```sh
+curl -s "${auth[@]}" $API/lint
+```
+
+```json
+[
+  { "code": "orphan-element", "message": "\"Payments\" is in the model but not on any view", "ids": ["01J..."] },
+  { "code": "unplaced-relationship", "message": "Relationship Crew Rostering → Booking Engine appears on no view", "ids": ["01J..."] }
+]
+```
+
+### Ego network / impact traversal — `GET /elements/{id}/connections`
+
+The same breadth-first traversal the Connections view runs: every element and
+relationship within `depth` hops of the centre element.
+
+```sh
+curl -s "${auth[@]}" "$API/elements/$ID/connections?depth=2&direction=out"
+```
+
+- `depth` — integer 1–3, default 1.
+- `direction` — `both` (default), `out`, or `in`.
+- `404` if the element id doesn't exist; `400` for an out-of-range `depth` or an
+  unrecognised `direction`.
+
+Response shape:
+
+```json
+{ "center": "01J...", "nodes": [{ "id": "01J...", "kind": "system", "name": "Payments", "hop": 1 }], "edges": [ /* Relationship objects */ ] }
+```
+
+### Diagram export — `GET /views/{id}/export`
+
+Renders a view as Mermaid, PlantUML or SVG — the same output the Toolbar's
+export menu downloads, generated straight from the model:
+
+```sh
+curl -s "${auth[@]}" "$API/views/$VIEW/export?format=mermaid"   # text/plain, C4Context Mermaid
+curl -s "${auth[@]}" "$API/views/$VIEW/export?format=plantuml"  # text/plain, C4-PlantUML
+curl -s "${auth[@]}" "$API/views/$VIEW/export?format=svg"       # image/svg+xml, standalone SVG
+```
+
+`404` for an unknown view id; `400` for an unrecognised `format`.
+
+### Command schema map — `GET /commands/schema`
+
+A JSON-schema fragment for every command type the bus in `POST /commands`
+accepts (`createElement`, `updateElement`, `deleteElement`,
+`createRelationship`, `updateRelationship`, `deleteRelationship`,
+`createView`, `updateView`, `deleteView`, `placeOnView`, `updatePlacement`,
+`removeFromView`, `createState`, `updateState`, `deleteState`,
+`updateWorkspaceMeta`, `batch`) — useful for validating a batch client-side
+before posting it:
+
+```sh
+curl -s "${auth[@]}" $API/commands/schema
+```
+
 ## Notes for AI agents
 
 - Fetch `GET /api/v1/openapi.json` for the full machine-readable contract.
@@ -152,3 +225,8 @@ Crockford base32). The response is the resulting workspace snapshot.
 - The web app can edit either a browser-local workspace or the shared database
   workspace (source switcher in the toolbar). In shared mode the app polls for
   changes, so API writes appear in open sessions within a few seconds.
+- For read-side reasoning about the model — consistency checks, blast-radius/impact
+  analysis, or handing a diagram to something else — use `GET /lint`,
+  `GET /elements/{id}/connections`, and `GET /views/{id}/export` before falling back
+  to fetching the whole workspace and computing it yourself; validate a raw command
+  batch shape against `GET /commands/schema` before `POST /commands`.

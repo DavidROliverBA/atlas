@@ -88,6 +88,25 @@ describe("command bus", () => {
     expect(f.ws.element(f.booking.id).description).toBe("Reservations and ticketing");
   });
 
+  it("setting parentId to null means top-level, never a deleted key", () => {
+    const f = buildFixture();
+    const groupId = f.ids.next();
+    f.bus.dispatch({
+      type: "createElement",
+      element: { id: groupId, kind: "group", name: "Zone", parentId: null },
+    });
+    f.bus.dispatch({ type: "updateElement", id: f.booking.id, changes: { parentId: groupId } });
+    f.bus.dispatch({ type: "updateElement", id: f.booking.id, changes: { parentId: null } });
+
+    // The property must survive as an explicit null so strict === null scans
+    // (Workspace.children(null), serialisation) still see the element.
+    expect(f.ws.element(f.booking.id).parentId).toBeNull();
+    expect(f.ws.children(null).map((e) => e.id)).toContain(f.booking.id);
+
+    f.bus.undo();
+    expect(f.ws.element(f.booking.id).parentId).toBe(groupId);
+  });
+
   it("refuses to delete an element with children", () => {
     const f = buildFixture();
     expect(() => f.bus.dispatch({ type: "deleteElement", id: f.booking.id })).toThrow(/contains/);
