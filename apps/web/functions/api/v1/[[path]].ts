@@ -26,9 +26,9 @@ import { RevisionConflictError, SupabaseStorageAdapter } from "@atlas/storage-su
 import { createClient } from "@supabase/supabase-js";
 import { openapiSpec } from "./openapi-spec";
 
-const SUPABASE_URL = "https://cbimxxazmoujtetkrpvk.supabase.co";
+const SUPABASE_URL = "https://gpklzsbyrvwgauvoolsx.supabase.co";
 const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNiaW14eGF6bW91anRldGtycHZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzNDczODAsImV4cCI6MjA5OTkyMzM4MH0.S5yAEtC6qCzr1IyX_noTbGr3Bas8cO-oTPzz7tWVJ58";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwa2x6c2J5cnZ3Z2F1dm9vbHN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0Mzg5NTMsImV4cCI6MjEwMDAxNDk1M30.TFnrj83nzCVGidsnTnqW0m9VWFBxbm6V00ehvT_BH0U";
 export const DEFAULT_WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 
 interface Env {
