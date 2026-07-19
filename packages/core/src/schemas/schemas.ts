@@ -28,6 +28,29 @@ const color = { type: "string", pattern: "^#[0-9a-fA-F]{6}$" } as const;
 
 const PORT_PATTERN = "^[tb][0-4]$|^[lr][0-2]$";
 
+const costEntry = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "label", "category", "classification", "kind", "amount"],
+  properties: {
+    id: { type: "string", pattern: ULID_PATTERN },
+    label: { type: "string", minLength: 1 },
+    category: {
+      enum: ["licences", "infrastructure", "people", "vendor-services", "change", "decommission", "other"],
+    },
+    classification: { enum: ["run", "change", "acquire", "retire"] },
+    kind: { enum: ["recurring", "one-off"] },
+    amount: { type: "number", exclusiveMinimum: 0 },
+    currency: { type: "string", pattern: "^[A-Z]{3}$" },
+    period: { enum: ["monthly", "annual"] },
+    amortiseYears: { type: "integer", minimum: 1, maximum: 50 },
+    confidence: { enum: ["estimate", "quoted", "actual"] },
+    validFrom: { type: "string", pattern: DATE_PATTERN },
+    validTo: { type: "string", pattern: DATE_PATTERN },
+    states: { type: "array", items: { type: "string", pattern: ULID_PATTERN }, minItems: 1 },
+  },
+} as const;
+
 export const workspaceSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://atlas.dev/schemas/workspace.json",
@@ -75,6 +98,7 @@ export const elementSchema = {
     },
     properties: stringMap,
     color,
+    costs: { type: "array", minItems: 1, items: costEntry },
     stencil: {
       type: "object",
       additionalProperties: false,

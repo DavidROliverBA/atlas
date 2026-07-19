@@ -39,6 +39,7 @@ create table if not exists elements (
   temporal jsonb,
   state_overrides jsonb,
   color text check (color ~ '^#[0-9a-fA-F]{6}$'),
+  costs jsonb,
   version bigint not null default 1
 );
 
@@ -173,14 +174,14 @@ begin
 
   insert into elements (id, workspace_id, kind, name, parent_id, description, documentation, team,
                         status, criticality, technology, owners, tags, links, properties, color,
-                        stencil, temporal, state_overrides)
+                        costs, stencil, temporal, state_overrides)
   select r.id, p_workspace_id, r.kind, r.name, r.parent_id, r.description, r.documentation, r.team,
          r.status, r.criticality, r.technology, r.owners, r.tags, r.links, r.properties, r.color,
-         r.stencil, r.temporal, r.state_overrides
+         r.costs, r.stencil, r.temporal, r.state_overrides
   from jsonb_to_recordset(coalesce(p_payload->'elements', '[]'::jsonb)) as r(
     id text, kind text, name text, parent_id text, description text, documentation text, team text,
     status text, criticality text, technology jsonb, owners jsonb, tags jsonb, links jsonb,
-    properties jsonb, color text, stencil jsonb, temporal jsonb, state_overrides jsonb
+    properties jsonb, color text, costs jsonb, stencil jsonb, temporal jsonb, state_overrides jsonb
   );
 
   insert into relationships (id, workspace_id, source_id, target_id, name, description, direction,

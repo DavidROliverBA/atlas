@@ -60,6 +60,57 @@ describe("ChangeSetBuilder", () => {
     expect(builder.commands).toHaveLength(0);
   });
 
+  it("sets, validates and clears cost entries with state-name resolution", () => {
+    const { ids, ws, bus, view } = seed();
+    bus.dispatch({ type: "createState", state: { id: ids.next(), name: "Target", date: "2028-01-01" } });
+    const builder = new ChangeSetBuilder(ws, ids, view.id);
+
+    const count = builder.setCosts({
+      element: "Payments",
+      costs: [
+        { label: "Licence", category: "licences", classification: "run", kind: "recurring", amount: 42000 },
+        {
+          label: "Migration",
+          category: "change",
+          classification: "change",
+          kind: "one-off",
+          amount: 250000,
+          states: ["Target"],
+        },
+      ],
+    });
+    expect(count).toBe(2);
+    bus.dispatch(builder.toBatch("costs")!);
+    const payments = [...ws.elements.values()].find((e) => e.name === "Payments")!;
+    expect(payments.costs).toHaveLength(2);
+    const targetId = [...ws.states.values()].find((s) => s.name === "Target")!.id;
+    expect(payments.costs![1]!.states).toEqual([targetId]);
+
+    // Invalid amounts and unknown states are rejected before anything is queued.
+    const bad = new ChangeSetBuilder(ws, ids, view.id);
+    expect(() =>
+      bad.setCosts({
+        element: "Payments",
+        costs: [{ label: "Free", category: "other", classification: "run", kind: "recurring", amount: 0 }],
+      }),
+    ).toThrow(/greater than zero/);
+    expect(() =>
+      bad.setCosts({
+        element: "Payments",
+        costs: [
+          { label: "X", category: "other", classification: "run", kind: "recurring", amount: 1, states: ["Nope"] },
+        ],
+      }),
+    ).toThrow(ToolError);
+    expect(bad.commands).toHaveLength(0);
+
+    // Empty list clears the key entirely.
+    const clearer = new ChangeSetBuilder(ws, ids, view.id);
+    expect(clearer.setCosts({ element: "Payments", costs: [] })).toBe(0);
+    bus.dispatch(clearer.toBatch("clear")!);
+    expect([...ws.elements.values()].find((e) => e.name === "Payments")!.costs).toBeUndefined();
+  });
+
   it("moves tagged elements via update with parent resolution", () => {
     const { ids, ws, bus, view } = seed();
     const builder = new ChangeSetBuilder(ws, ids, view.id);

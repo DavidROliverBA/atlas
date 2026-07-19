@@ -16,6 +16,7 @@ import {
   Workspace,
   ulidFactory,
   type Command,
+  type CostEntry,
   type Element,
   type Relationship,
   type NamedState,
@@ -95,6 +96,10 @@ async function loadWorkspace(adapter: SupabaseStorageAdapter, db: ReturnType<typ
 }
 
 type Mutator = (ws: Workspace, bus: CommandBus, nextId: () => Ulid) => unknown;
+
+/** Cost entries may arrive without ids (per the OpenAPI contract) — assign them server-side. */
+const withCostIds = (costs: CostEntry[], nextId: () => Ulid): CostEntry[] =>
+  costs.map((c) => (c.id ? c : { ...c, id: nextId() }));
 
 export async function onRequest(context: Ctx): Promise<Response> {
   const { request, env } = context;
@@ -217,13 +222,15 @@ export async function onRequest(context: Ctx): Promise<Response> {
             input.parentId ?? (input.parentName ? resolveByName(ws, input.parentName).id : null);
           const { parentName: _ignored, ...rest } = input;
           const element = { ...rest, id: nextId(), kind: input.kind, name: input.name, parentId } as Element;
+          if (element.costs) element.costs = withCostIds(element.costs, nextId);
           bus.dispatch({ type: "createElement", element });
           return element;
         });
       }
       if (method === "PATCH" && id) {
         const changes = await body<Partial<Element>>();
-        return mutate((ws, bus) => {
+        return mutate((ws, bus, nextId) => {
+          if (changes.costs) changes.costs = withCostIds(changes.costs, nextId);
           bus.dispatch({ type: "updateElement", id, changes: changes as never });
           return ws.element(id);
         });

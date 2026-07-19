@@ -5,7 +5,7 @@
  */
 
 import type { Ulid } from "../ids.js";
-import type { Element, NamedState, Placement, Relationship, Temporal, View } from "../metamodel/types.js";
+import type { CostEntry, Element, NamedState, Placement, Relationship, Temporal, View } from "../metamodel/types.js";
 import { Workspace } from "../model/workspace.js";
 import {
   ModelRuleError,
@@ -58,6 +58,25 @@ function checkTemporal(ws: Workspace, temporal: Temporal | null | undefined): vo
   }
   if (temporal.validFrom && temporal.validTo && temporal.validFrom > temporal.validTo) {
     throw new Error(`validFrom (${temporal.validFrom}) is after validTo (${temporal.validTo})`);
+  }
+}
+
+function checkCosts(ws: Workspace, costs: CostEntry[] | null | undefined): void {
+  if (!costs) return;
+  const seen = new Set<Ulid>();
+  for (const cost of costs) {
+    if (seen.has(cost.id)) throw new Error(`Duplicate cost entry id: ${cost.id}`);
+    seen.add(cost.id);
+    for (const stateId of cost.states ?? []) {
+      if (!ws.states.has(stateId)) {
+        throw new Error(`Unknown state referenced by cost "${cost.label}": ${stateId}`);
+      }
+    }
+    if (!cost.label.trim()) throw new Error("Cost entries need a label");
+    if (cost.amount <= 0) throw new Error(`Cost "${cost.label}" amount must be greater than zero`);
+    if (cost.validFrom && cost.validTo && cost.validFrom > cost.validTo) {
+      throw new Error(`Cost "${cost.label}" validFrom (${cost.validFrom}) is after validTo (${cost.validTo})`);
+    }
   }
 }
 
@@ -150,6 +169,7 @@ export class CommandBus {
         if (ws.elements.has(el.id)) throw new Error(`Element already exists: ${el.id}`);
         assertLegalContainment(ws, el.kind, el.parentId);
         checkTemporal(ws, el.temporal);
+        checkCosts(ws, el.costs);
         this.checkStencil(el.stencil);
         ws.elements.set(el.id, structuredClone(el));
         return { type: "deleteElement", id: el.id };
@@ -166,6 +186,7 @@ export class CommandBus {
           // defined by the element itself, which does not change kind).
         }
         checkTemporal(ws, changes.temporal);
+        checkCosts(ws, changes.costs);
         if (changes.stateOverrides) {
           for (const stateId of Object.keys(changes.stateOverrides)) {
             if (!ws.states.has(stateId)) throw new Error(`Unknown state in overrides: ${stateId}`);

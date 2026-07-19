@@ -57,6 +57,10 @@ export function describeElement(ws: Workspace, name: string): string | null {
     el.status && `status: ${el.status}`,
     el.tags?.length && `tags: ${el.tags.join(", ")}`,
     el.temporal && `temporal: ${JSON.stringify(el.temporal)}`,
+    el.costs?.length &&
+      `costs: ${el.costs
+        .map((c) => `${c.label} ${c.currency ?? "GBP"} ${c.amount} ${c.kind === "recurring" ? `per ${c.period ?? "annual"} period` : `one-off over ${c.amortiseYears ?? 3}y`} (${c.category}/${c.classification})`)
+        .join("; ")}`,
     `appears in: ${ws.viewsContaining(el.id).map((v) => `"${v.name}"`).join(", ") || "(no views)"}`,
     rels.length ? `relationships:\n${rels.join("\n")}` : "relationships: none",
   ]

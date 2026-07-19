@@ -16,6 +16,28 @@ const Temporal = {
   },
 };
 
+const CostEntry = {
+  type: "object",
+  required: ["id", "label", "category", "classification", "kind", "amount"],
+  description:
+    "A line of cost for TCO. Recurring entries normalise to an annual figure (amount × 12 when period=monthly); one-off entries amortise straight-line over amortiseYears (default 3). validFrom/validTo/states scope the entry temporally with the same semantics as element validity. Costs roll up through containment.",
+  properties: {
+    id: { ...ULID, description: "Assigned by the server when omitted on write" },
+    label: { type: "string", example: "Enterprise licence" },
+    category: { enum: ["licences", "infrastructure", "people", "vendor-services", "change", "decommission", "other"] },
+    classification: { enum: ["run", "change", "acquire", "retire"] },
+    kind: { enum: ["recurring", "one-off"] },
+    amount: { type: "number", exclusiveMinimum: 0, description: "Whole currency units" },
+    currency: { type: "string", pattern: "^[A-Z]{3}$", description: "ISO 4217; GBP when omitted" },
+    period: { enum: ["monthly", "annual"], description: "Recurring only; annual when omitted" },
+    amortiseYears: { type: "integer", minimum: 1, maximum: 50, description: "One-off only; 3 when omitted" },
+    confidence: { enum: ["estimate", "quoted", "actual"] },
+    validFrom: { type: "string", format: "date" },
+    validTo: { type: "string", format: "date" },
+    states: { type: "array", items: ULID, description: "Named-state ids the entry belongs to" },
+  },
+};
+
 const ElementProps = {
   kind: { enum: ["person", "system", "container", "component", "group"] },
   name: { type: "string" },
@@ -31,6 +53,7 @@ const ElementProps = {
   links: { type: "array", items: { type: "object", required: ["title", "url"], properties: { title: { type: "string" }, url: { type: "string", format: "uri" } } } },
   properties: { type: "object", additionalProperties: { type: "string" } },
   color: COLOR,
+  costs: { type: "array", items: { $ref: "#/components/schemas/CostEntry" }, description: "TCO cost entries; roll up through containment" },
   temporal: Temporal,
 };
 
@@ -202,6 +225,7 @@ export const openapiSpec = {
     },
     schemas: {
       Error: { type: "object", properties: { error: { type: "string" } } },
+      CostEntry,
       Element: { type: "object", required: ["id", "kind", "name", "parentId"], properties: { id: ULID, ...ElementProps } },
       ElementInput: {
         type: "object",

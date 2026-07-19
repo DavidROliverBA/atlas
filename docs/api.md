@@ -88,6 +88,41 @@ curl -s "${auth[@]}" -d '{"kind":"component","name":"Rogue"}' $API/elements
 # → 400 {"error": "A Component cannot live at the top level. Legal parents: Container."}
 ```
 
+## Costs and TCO
+
+Elements carry an optional `costs` array — the input to the TCO analysis in the
+app (Analysis drawer → TCO). Each entry:
+
+| Field | Notes |
+|---|---|
+| `label` | Required. e.g. "Enterprise licence" |
+| `category` | Required. `licences` \| `infrastructure` \| `people` \| `vendor-services` \| `change` \| `decommission` \| `other` |
+| `classification` | Required. `run` \| `change` \| `acquire` \| `retire` |
+| `kind` | Required. `recurring` or `one-off` |
+| `amount` | Required, > 0, whole currency units |
+| `currency` | ISO 4217; `GBP` when omitted |
+| `period` | Recurring only: `monthly` or `annual` (default). Monthly is normalised ×12 |
+| `amortiseYears` | One-off only: straight-line amortisation window (default 3) |
+| `confidence` | `estimate` \| `quoted` \| `actual` |
+| `validFrom` / `validTo` / `states` | Temporal scope, same semantics as element validity — lets a target-state architecture carry different costs |
+| `id` | ULID; assigned by the server when omitted |
+
+Costs roll up through containment (component → container → system), so attach
+each cost to the element that actually incurs it — never to both an element and
+its parent.
+
+```sh
+# A recurring licence and an amortised migration on one element
+curl -s "${auth[@]}" -X PATCH $API/elements/$ID -d '{
+  "costs": [
+    {"label":"SaaS licence","category":"licences","classification":"run","kind":"recurring","amount":42000,"period":"annual","confidence":"quoted"},
+    {"label":"Migration project","category":"change","classification":"change","kind":"one-off","amount":250000,"amortiseYears":3,"validFrom":"2026-01-01"}
+  ]
+}'
+```
+
+`PATCH` replaces the whole array; send `"costs": null` to clear it.
+
 ## Raw commands (advanced)
 
 `POST /commands` applies any Atlas commands atomically (all-or-nothing):
@@ -114,6 +149,6 @@ Crockford base32). The response is the resulting workspace snapshot.
   metamodel rule you hit.
 - The database workspace is shared: read `GET /workspace` first to see what exists
   rather than assuming an empty model.
-- The web app's canvas currently edits its own browser-local workspace; the database
-  workspace is the API's. Export/import bridges them today; live DB-backed editing in
-  the app arrives with the multi-user milestone wiring.
+- The web app can edit either a browser-local workspace or the shared database
+  workspace (source switcher in the toolbar). In shared mode the app polls for
+  changes, so API writes appear in open sessions within a few seconds.

@@ -4,15 +4,49 @@
  */
 
 import { useMemo, useState } from "react";
-import { dependencyMatrix, downstreamOf, lintWorkspace, type Ulid } from "@atlas/core";
+import { dependencyMatrix, downstreamOf, estateTco, lintWorkspace, type TcoRow, type Ulid } from "@atlas/core";
 import { motion } from "framer-motion";
 import { useAtlas } from "../store";
+
+const TCO_YEAR_OPTIONS = [1, 3, 5, 10] as const;
+
+/** Currency-formatted money, en-GB conventions (§CLAUDE.md default currency is GBP). */
+function formatMoney(amount: number, currency: string): string {
+  return new Intl.NumberFormat("en-GB", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount);
+}
+
+/** Plain grouped number, used when currencies are mixed and a symbol would mislead. */
+function formatPlain(amount: number): string {
+  return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(amount);
+}
+
+/** Escape a CSV field: quote and double-up embedded quotes only when needed. */
+function csvField(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+function downloadTcoCsv(rows: TcoRow[], years: number): void {
+  const header = `element,kind,own_annual,rolled_up_annual,tco_${years}yr`;
+  const lines = rows.map(
+    (r) => `${csvField(r.name)},${r.kind},${r.ownAnnual},${r.rolledUpAnnual},${r.tco}`,
+  );
+  const blob = new Blob([[header, ...lines].join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "atlas-tco.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
   const ws = useAtlas((s) => s.ws);
   useAtlas((s) => s.rev);
   const select = useAtlas((s) => s.select);
+  const temporal = useAtlas((s) => s.temporal);
+  const costOverlay = useAtlas((s) => s.costOverlay);
   const [impactRoot, setImpactRoot] = useState<Ulid | "">("");
+  const [tcoYears, setTcoYears] = useState<number>(5);
 
   const issues = useMemo(() => lintWorkspace(ws), [ws]);
   const matrix = useMemo(() => {
@@ -31,6 +65,12 @@ export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
   const elements = [...ws.elements.values()]
     .filter((e) => e.kind !== "group")
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  // TCO (§TCO plan Phase 3): same "current temporal context, fall back to all time"
+  // convention as the rest of this drawer's sections (they read straight off the store).
+  const tco = useMemo(() => estateTco(ws, temporal, tcoYears), [ws, temporal, tcoYears]);
+  const tcoMixed = tco.currencies.length > 1;
+  const tcoCurrency = tco.currencies.length === 1 ? tco.currencies[0]! : "GBP";
 
   return (
     <motion.aside
@@ -146,6 +186,114 @@ export function AnalysisDrawer({ onClose }: { onClose: () => void }) {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+
+        <section data-testid="tco-section">
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            TCO (total cost of ownership)
+          </h3>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              Horizon
+              <select
+                data-testid="tco-years"
+                className="rounded-md border border-slate-300 px-1.5 py-0.5 text-xs"
+                value={tcoYears}
+                onChange={(e) => setTcoYears(Number(e.target.value))}
+              >
+                {TCO_YEAR_OPTIONS.map((y) => (
+                  <option key={y} value={y}>
+                    {y}-year
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600" title="Tint canvas nodes by rolled-up annual cost">
+              <input
+                data-testid="tco-overlay-toggle"
+                type="checkbox"
+                checked={costOverlay}
+                onChange={(e) => useAtlas.setState({ costOverlay: e.target.checked })}
+              />
+              Cost overlay
+            </label>
+          </div>
+
+          {tcoMixed && (
+            <p data-testid="tco-mixed-warning" className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+              Mixed currencies — totals are unit-less
+            </p>
+          )}
+
+          <div className="mb-2 flex items-center gap-4 text-xs text-slate-700">
+            <span>
+              Total run-rate:{" "}
+              <span data-testid="tco-total-annual" className="font-semibold tabular-nums">
+                {tcoMixed ? formatPlain(tco.totalAnnual) : formatMoney(tco.totalAnnual, tcoCurrency)}
+                /yr
+              </span>
+            </span>
+            <span>
+              {tcoYears}-yr TCO:{" "}
+              <span data-testid="tco-total" className="font-semibold tabular-nums">
+                {tcoMixed ? formatPlain(tco.totalTco) : formatMoney(tco.totalTco, tcoCurrency)}
+              </span>
+            </span>
+          </div>
+
+          {tco.rows.length === 0 ? (
+            <p data-testid="tco-empty" className="text-xs text-slate-400">
+              No costs recorded yet — add them in the Inspector's Costs section.
+            </p>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]" data-testid="tco-table">
+                  <thead>
+                    <tr>
+                      <th className="p-1 text-left text-slate-400">Element</th>
+                      <th className="p-1 text-right text-slate-400">Own £/yr</th>
+                      <th className="p-1 text-right text-slate-400">Rolled-up £/yr</th>
+                      <th className="p-1 text-right text-slate-400">{tcoYears}-yr TCO</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tco.rows.map((r) => (
+                      <tr
+                        key={r.id}
+                        data-testid="tco-row"
+                        className="cursor-pointer hover:bg-slate-50"
+                        onClick={() => select({ type: "element", id: r.id })}
+                      >
+                        <td className="max-w-32 truncate p-1">
+                          {r.name}{" "}
+                          <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-slate-500">
+                            {r.kind}
+                          </span>
+                        </td>
+                        <td className="p-1 text-right tabular-nums">
+                          {tcoMixed ? formatPlain(r.ownAnnual) : formatMoney(r.ownAnnual, tcoCurrency)}
+                        </td>
+                        <td className="p-1 text-right tabular-nums">
+                          {tcoMixed ? formatPlain(r.rolledUpAnnual) : formatMoney(r.rolledUpAnnual, tcoCurrency)}
+                        </td>
+                        <td className="p-1 text-right tabular-nums">
+                          {tcoMixed ? formatPlain(r.tco) : formatMoney(r.tco, tcoCurrency)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                data-testid="tco-export-csv"
+                onClick={() => downloadTcoCsv(tco.rows, tcoYears)}
+                className="mt-2 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+              >
+                Export CSV
+              </button>
+            </>
           )}
         </section>
       </div>

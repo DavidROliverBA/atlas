@@ -49,6 +49,42 @@ export interface Temporal {
   states?: Ulid[];
 }
 
+/** Fixed cost-category perimeter (§TCO plan) — not user-extensible in v1. */
+export type CostCategory =
+  | "licences"
+  | "infrastructure"
+  | "people"
+  | "vendor-services"
+  | "change"
+  | "decommission"
+  | "other";
+
+export type CostClassification = "run" | "change" | "acquire" | "retire";
+
+export type CostConfidence = "estimate" | "quoted" | "actual";
+
+/** A single line of cost attached to an element (or group), for TCO roll-up. */
+export interface CostEntry {
+  id: Ulid;
+  label: string;
+  category: CostCategory;
+  classification: CostClassification;
+  kind: "recurring" | "one-off";
+  /** Positive amount in whole currency units. */
+  amount: number;
+  /** ISO 4217, default "GBP" when omitted. */
+  currency?: string;
+  /** Recurring only; default "annual". */
+  period?: "monthly" | "annual";
+  /** One-off only; straight-line amortisation, default 3. */
+  amortiseYears?: number;
+  confidence?: CostConfidence;
+  /** Same semantics as Temporal on elements. */
+  validFrom?: IsoDate;
+  validTo?: IsoDate;
+  states?: Ulid[];
+}
+
 /** Reference to the stencil an element was created from, plus its pack-specific attributes. */
 export interface StencilRef {
   pack: string;
@@ -83,6 +119,7 @@ export interface Element {
   properties?: Record<string, string>;
   /** Custom box colour (hex, e.g. "#0ea5e9"); overrides the kind/stencil default. */
   color?: string;
+  costs?: CostEntry[];
   stencil?: StencilRef;
   temporal?: Temporal;
   /** Keyed by state id. */

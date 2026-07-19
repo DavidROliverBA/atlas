@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 import type { Criticality, Element, Lifecycle, Relationship, Temporal, Ulid } from "@atlas/core";
 import { KIND_LABELS } from "../stencils";
 import { stencilRegistry, useAtlas } from "../store";
+import { CostsEditor } from "./CostsEditor";
 
 const STATUSES: Lifecycle[] = ["proposed", "planned", "live", "deprecated", "decommissioned"];
 const CRITICALITIES: Criticality[] = ["low", "medium", "high", "critical"];
@@ -207,6 +208,8 @@ function ElementInspector({ element }: { element: Element }) {
           onSave={(next) => update({ temporal: next })}
         />
       </Field>
+
+      <CostsEditor key={element.id} element={element} />
 
       {element.stencil && <StencilAttributes element={element} />}
 

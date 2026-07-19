@@ -13,6 +13,7 @@
  */
 
 import type {
+  CostEntry,
   Element,
   NamedState,
   Relationship,
@@ -42,6 +43,30 @@ function normaliseTemporal(t: Temporal | undefined): Temporal | undefined {
   return dropEmpty(out);
 }
 
+function normaliseCostEntry(c: CostEntry): CostEntry {
+  return {
+    id: c.id,
+    label: c.label,
+    category: c.category,
+    classification: c.classification,
+    kind: c.kind,
+    amount: c.amount,
+    currency: c.currency,
+    period: c.period,
+    amortiseYears: c.amortiseYears,
+    confidence: c.confidence,
+    validFrom: c.validFrom,
+    validTo: c.validTo,
+    states: sortedSet(c.states),
+  };
+}
+
+function normaliseCosts(costs: CostEntry[] | undefined): CostEntry[] | undefined {
+  const list = dropEmpty(costs);
+  if (!list) return undefined;
+  return [...list].sort((a, b) => (a.id < b.id ? -1 : 1)).map(normaliseCostEntry);
+}
+
 function normaliseElement(e: Element): Element {
   return {
     id: e.id,
@@ -59,6 +84,7 @@ function normaliseElement(e: Element): Element {
     links: dropEmpty(e.links),
     properties: dropEmpty(e.properties),
     color: e.color,
+    costs: normaliseCosts(e.costs),
     stencil: e.stencil,
     temporal: normaliseTemporal(e.temporal),
     stateOverrides: dropEmpty(e.stateOverrides),
@@ -206,6 +232,13 @@ export function checkIntegrity(ws: Workspace): void {
     }
     for (const stateId of Object.keys(e.stateOverrides ?? {})) {
       if (!ws.states.has(stateId)) problems.push(`Element ${e.id} has overrides for unknown state ${stateId}`);
+    }
+    for (const cost of e.costs ?? []) {
+      for (const stateId of cost.states ?? []) {
+        if (!ws.states.has(stateId)) {
+          problems.push(`Element ${e.id} cost "${cost.label}" references unknown state ${stateId}`);
+        }
+      }
     }
   }
   for (const r of ws.relationships.values()) {

@@ -22,6 +22,7 @@ Rules:
 - Use the tools to make changes. Changes are queued as a proposal the user reviews — they are not applied until the user clicks Apply, so make all the changes the user asked for in one turn.
 - Refer to existing elements by their exact names. Use query_model when unsure what exists.
 - When creating elements that should be visible, also place them on a view (place_on_view defaults to the user's current view).
+- Costs for TCO live on elements as cost entries (set_costs). Recurring entries normalise to annual; one-off entries amortise straight-line (default 3 years). Costs roll up through containment, so put a cost on the element that actually incurs it, not on its parent as well.
 - Keep replies short and factual. Summarise what you queued; do not claim changes are applied.`;
 
 export const AI_TOOLS: Anthropic.Tool[] = [
@@ -153,6 +154,43 @@ export const AI_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "set_costs",
+    description:
+      "Queue replacement of an element's cost entries (TCO). Pass the FULL list — it overwrites any existing entries; pass an empty list to clear. Amounts are positive numbers in whole currency units (GBP unless currency is set). Recurring entries count per period; one-off entries amortise over amortiseYears (default 3). validFrom/validTo/states scope an entry temporally, same as element validity.",
+    input_schema: {
+      type: "object",
+      required: ["element", "costs"],
+      properties: {
+        element: { type: "string" },
+        costs: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["label", "category", "classification", "kind", "amount"],
+            properties: {
+              label: { type: "string" },
+              category: {
+                enum: ["licences", "infrastructure", "people", "vendor-services", "change", "decommission", "other"],
+              },
+              classification: { enum: ["run", "change", "acquire", "retire"] },
+              kind: { enum: ["recurring", "one-off"] },
+              amount: { type: "number", description: "> 0, whole currency units" },
+              currency: { type: "string", description: "ISO 4217, e.g. GBP (default)" },
+              period: { enum: ["monthly", "annual"], description: "Recurring only; default annual" },
+              amortiseYears: { type: "integer", description: "One-off only; default 3" },
+              confidence: { enum: ["estimate", "quoted", "actual"] },
+              validFrom: { type: "string", description: "YYYY-MM-DD" },
+              validTo: { type: "string", description: "YYYY-MM-DD" },
+              states: { type: "array", items: { type: "string" }, description: "Named-state names" },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "set_temporal_state",
     description:
       "Queue temporal validity on an element: validFrom/validTo ISO dates (YYYY-MM-DD) and/or membership in named states.",
@@ -228,6 +266,10 @@ function executeTool(
     case "place_on_view": {
       const view = builder.placeOnView(input["elements"] as string[], input["view"] as string | undefined);
       return `Placements queued on "${view.name}".`;
+    }
+    case "set_costs": {
+      const count = builder.setCosts(input as never);
+      return count === 0 ? "Costs cleared." : `Queued ${count} cost entr${count === 1 ? "y" : "ies"}.`;
     }
     case "set_temporal_state": {
       builder.setTemporal(input as never);

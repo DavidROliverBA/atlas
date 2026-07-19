@@ -28,6 +28,16 @@ function buildWorkspace(): Workspace {
     links: [{ title: "Repo", url: "https://example.com/repo" }],
     properties: { costCentre: "C123" },
     temporal: { validFrom: "2020-01-01" },
+    costs: [
+      {
+        id: ids.next(),
+        label: "Booking support team",
+        category: "people" as const,
+        classification: "run" as const,
+        kind: "recurring" as const,
+        amount: 400000,
+      },
+    ],
   };
   const api = {
     id: ids.next(),
@@ -94,7 +104,9 @@ describe("workspace ↔ rows mapping", () => {
     const booking = rows.elements.find((e) => e.name === "Booking")!;
     expect(booking.stencil).toBeNull();
     expect(booking.state_overrides).toBeNull();
+    expect(booking.costs).toMatchObject([{ label: "Booking support team", amount: 400000 }]);
     const api = rows.elements.find((e) => e.name === "API")!;
     expect(api.stencil).toMatchObject({ pack: "aws", stencil: "lambda" });
+    expect(api.costs).toBeNull();
   });
 });

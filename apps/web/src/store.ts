@@ -89,6 +89,8 @@ export interface AtlasStore {
   diffPair: { a: TemporalContext; b: TemporalContext } | null;
   /** Tag-based colour overlay (§3.3): elements carrying this tag are highlighted. */
   highlightTag: string | null;
+  /** Cost colour overlay (§TCO plan, phase 3): tint nodes by rolled-up annual cost. */
+  costOverlay: boolean;
   /** Where the open workspace lives: this browser, or the shared database via the API. */
   source: "local" | "db";
   /** Token used for database mode (cached at connect time). */
@@ -152,6 +154,7 @@ export const useAtlas = create<AtlasStore>((set, get) => {
     temporal: { type: "all" },
     diffPair: null,
     highlightTag: null,
+    costOverlay: false,
     source: "local",
     dbToken: null,
 

@@ -12,6 +12,7 @@ import {
   CommandBus,
   Workspace,
   type Command,
+  type CostEntry,
   type Element,
   type ElementKind,
   type NamedState,
@@ -222,6 +223,29 @@ export class ChangeSetBuilder {
       { type: "updateElement", id: el.id, changes: { temporal } },
       { kind: "state", description: `Set temporal validity on "${el.name}"` },
     );
+  }
+
+  /** Replace an element's cost entries; returns how many were set (0 = cleared). */
+  setCosts(input: {
+    element: string;
+    costs: Array<Omit<CostEntry, "id" | "states"> & { states?: string[] }>;
+  }): number {
+    const el = this.resolveElement(input.element);
+    const costs: CostEntry[] = input.costs.map((c) => ({
+      ...c,
+      id: this.ids.next(),
+      ...(c.states?.length ? { states: c.states.map((s) => this.resolveState(s).id) } : {}),
+    }));
+    this.push(
+      { type: "updateElement", id: el.id, changes: { costs: costs.length ? costs : null } as never },
+      {
+        kind: "update",
+        description: costs.length
+          ? `Set ${costs.length} cost entr${costs.length === 1 ? "y" : "ies"} on "${el.name}"`
+          : `Clear costs on "${el.name}"`,
+      },
+    );
+    return costs.length;
   }
 
   /** The accumulated change set as one atomic, single-undo batch. */

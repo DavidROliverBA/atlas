@@ -51,3 +51,14 @@ export {
   type DirectionFilter,
   type LintIssue,
 } from "./analysis/graph.js";
+export {
+  costEntryVisible,
+  annualisedAmount,
+  elementAnnual,
+  annualAtYearOffset,
+  estateTco,
+  tcoDiff,
+  type TcoRow,
+  type EstateTco,
+  type TcoDelta,
+} from "./analysis/tco.js";

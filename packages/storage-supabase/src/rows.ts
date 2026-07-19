@@ -31,6 +31,7 @@ export interface ElementRow {
   links: Element["links"] | null;
   properties: Element["properties"] | null;
   color: string | null;
+  costs: Element["costs"] | null;
   stencil: Element["stencil"] | null;
   temporal: Element["temporal"] | null;
   state_overrides: Element["stateOverrides"] | null;
@@ -109,6 +110,7 @@ export function elementToRow(e: Element, workspaceId: string): ElementRow {
     links: orNull(e.links),
     properties: orNull(e.properties),
     color: orNull(e.color),
+    costs: orNull(e.costs),
     stencil: orNull(e.stencil),
     temporal: orNull(e.temporal),
     state_overrides: orNull(e.stateOverrides),
@@ -132,6 +134,7 @@ export function rowToElement(row: ElementRow): Element {
     ...(row.links !== null ? { links: row.links } : {}),
     ...(row.properties !== null ? { properties: row.properties } : {}),
     ...(row.color !== null ? { color: row.color } : {}),
+    ...(row.costs !== null ? { costs: row.costs } : {}),
     ...(row.stencil !== null ? { stencil: row.stencil } : {}),
     ...(row.temporal !== null ? { temporal: row.temporal } : {}),
     ...(row.state_overrides !== null ? { stateOverrides: row.state_overrides } : {}),

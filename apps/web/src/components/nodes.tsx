@@ -1,7 +1,8 @@
+import { useMemo } from "react";
 import { Handle, type NodeProps, type Node } from "@xyflow/react";
-import type { Element } from "@atlas/core";
+import { elementAnnual, type Element, type TemporalContext, type Ulid, type Workspace } from "@atlas/core";
 import { KIND_LABELS, stencilFor } from "../stencils";
-import { stencilRegistry } from "../store";
+import { stencilRegistry, useAtlas } from "../store";
 import { PORTS } from "../ports";
 
 /** Mix a #rrggbb colour towards white (amount 0..1) for a soft box fill. */
@@ -15,6 +16,47 @@ function tint(hex: string, amount: number): string {
   };
   return `#${ch(16)}${ch(8)}${ch(0)}`;
 }
+
+/**
+ * Cost colour overlay (§TCO plan Phase 3): rolled-up annual cost per element,
+ * relative to the estate maximum. Computed once per (workspace revision,
+ * temporal context) rather than once per node, since every node needs the
+ * same estate-wide max to bucket against.
+ */
+interface CostOverlayData {
+  max: number;
+  byId: Map<Ulid, number>;
+}
+
+let overlayCache: { key: string; data: CostOverlayData } | null = null;
+
+function costOverlayKey(rev: number, ctx: TemporalContext): string {
+  if (ctx.type === "date") return `${rev}:date:${ctx.date}`;
+  if (ctx.type === "state") return `${rev}:state:${ctx.stateId}`;
+  return `${rev}:all`;
+}
+
+function computeCostOverlay(ws: Workspace, ctx: TemporalContext, rev: number): CostOverlayData {
+  const key = costOverlayKey(rev, ctx);
+  if (overlayCache && overlayCache.key === key) return overlayCache.data;
+  const byId = new Map<Ulid, number>();
+  let max = 0;
+  for (const el of ws.elements.values()) {
+    const { rolledUp } = elementAnnual(ws, el.id, ctx);
+    byId.set(el.id, rolledUp);
+    if (rolledUp > max) max = rolledUp;
+  }
+  const data: CostOverlayData = { max, byId };
+  overlayCache = { key, data };
+  return data;
+}
+
+const compactGbp = new Intl.NumberFormat("en-GB", {
+  style: "currency",
+  currency: "GBP",
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 /** All 16 connection ports (5 top, 5 bottom, 3 per side). */
 function NodePorts() {
@@ -66,6 +108,20 @@ export function AtlasElementNode({ data, selected }: NodeProps<AtlasNode>) {
   const customStyle = element.color
     ? { background: tint(element.color, 0.85), borderColor: element.color }
     : undefined;
+
+  const costOverlay = useAtlas((s) => s.costOverlay);
+  const ws = useAtlas((s) => s.ws);
+  const rev = useAtlas((s) => s.rev);
+  const temporal = useAtlas((s) => s.temporal);
+  const costBadge = useMemo(() => {
+    if (!costOverlay) return null;
+    const { max, byId } = computeCostOverlay(ws, temporal, rev);
+    const rolledUp = byId.get(element.id) ?? 0;
+    if (max <= 0 || rolledUp <= 0) return null;
+    const tier = rolledUp / max >= 2 / 3 ? "red" : "amber";
+    return { tier, label: `${compactGbp.format(rolledUp)}/yr` };
+  }, [costOverlay, ws, rev, temporal, element.id]);
+
   return (
     <div
       data-testid="canvas-node"
@@ -88,6 +144,16 @@ export function AtlasElementNode({ data, selected }: NodeProps<AtlasNode>) {
           className={`absolute -top-2 right-2 rounded-full px-1.5 text-[9px] font-semibold uppercase tracking-wide text-white ${DIFF_BADGE[diffStatus].cls}`}
         >
           {DIFF_BADGE[diffStatus].label}
+        </span>
+      )}
+      {costBadge && (
+        <span
+          data-testid="cost-badge"
+          className={`absolute -bottom-2 right-2 rounded-full px-1.5 text-[9px] font-semibold tabular-nums text-white ${
+            costBadge.tier === "red" ? "bg-red-600" : "bg-amber-500"
+          }`}
+        >
+          {costBadge.label}
         </span>
       )}
       <NodePorts />
