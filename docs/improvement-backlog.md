@@ -43,6 +43,21 @@ read-side API).
 
 (none — all closed as of 2026-07-19)
 
+## Open — code follow-ups
+
+- **Remove `'unsafe-eval'` from the app CSP** (hotfix 2026-07-19): replace Ajv in
+  `packages/core` (`schemas/validate.ts`, `stencils/packs.ts`) with a CSP-safe
+  validator that does no runtime codegen (e.g. `@cfworker/json-schema`), then restore
+  `script-src 'self'`. Root cause: Ajv's `new Function()` compilation runs at app boot
+  via the stencil registry; the round-2 CSP blocked it and prod rendered a blank page.
+- **CSP/headers smoke test in CI**: e2e runs against `vite preview`, which ignores
+  `public/_headers` — a CSP that breaks boot ships invisibly. Add one smoke test that
+  serves the built app with real headers (e.g. `wrangler pages dev`) and asserts the
+  root actually renders.
+- **Supabase advisor items**: revoke `anon` EXECUTE on `is_member` (keep
+  `authenticated` — it backs RLS policies); pin `search_path` on `is_member` and
+  `atlas_save_workspace`.
+
 ## Closed 2026-07-19
 
 - **`CLOUDFLARE_API_TOKEN` GitHub secret** — DONE. Account-owned token with
