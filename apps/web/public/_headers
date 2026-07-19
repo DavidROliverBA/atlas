@@ -17,11 +17,17 @@
 #     unpkg.com and inlines its init `<script>` + a small `<style>` block —
 #     the only page in the app that needs 'unsafe-inline'/a third-party host
 
+#   - 'unsafe-eval' in script-src is a TEMPORARY concession: Ajv (schema
+#     validation in @atlas/core, constructed at app boot by the stencil
+#     registry) generates validators via new Function(), which script-src
+#     'self' blocks — shipping without it renders a blank page. Remove once
+#     Ajv is replaced with a CSP-safe validator (no runtime codegen).
+
 /*
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://gpklzsbyrvwgauvoolsx.supabase.co wss://gpklzsbyrvwgauvoolsx.supabase.co; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://gpklzsbyrvwgauvoolsx.supabase.co wss://gpklzsbyrvwgauvoolsx.supabase.co; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
 
 # More specific path wins for a given header name, so this overrides the CSP
 # above only for the Swagger UI page — the rest of the app keeps the
