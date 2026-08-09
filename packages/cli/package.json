@@ -14,10 +14,10 @@
   },
   "dependencies": {
     "@atlas/core": "workspace:*",
-    "tsx": "^4.19.0"
+    "tsx": "^4.23.8"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "esbuild": "^0.28.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
